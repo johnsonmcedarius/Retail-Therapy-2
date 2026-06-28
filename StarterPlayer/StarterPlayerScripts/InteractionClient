@@ -126,6 +126,7 @@ local cancelMove = nil -- forward declaration so we can cancel move from outside
 
 local function removeBBGUI()
 	if activeBBGUI then
+		print("Removing active BBGUI menu.")
 		activeBBGUI:Destroy()
 		activeBBGUI = nil
 	end
@@ -136,21 +137,29 @@ local function showBBGUI(object)
 	removeBBGUI()
 	selectedObject = object
 
+	print("Opening BBGUI for target object:", object.Name)
+
 	local clone = bbguiTemplate:Clone()
 	clone.Enabled = true
-	clone.Active = true -- Blocks click-throughs to the world raycast entirely
+	clone.Active = true 
+
+	-- FIX FROM VIDEO: Parent it to PlayerGui so buttons receive clicks,
+	-- but set Adornee to the 3D part so it tracks it in space.
 	local adornee = getAdornee(object)
 	clone.Adornee = adornee
-	clone.Parent = object
+	clone.Parent = playerGui
 
 	local moveBB = clone:FindFirstChild("MoveBB")
 	local sellBB = clone:FindFirstChild("SellBB")
 	local storeBB = clone:FindFirstChild("StoreBB")
 	local cancelBB = clone:FindFirstChild("CancelBB")
 
-	-- Explicitly set UI buttons to active so they sync input correctly
 	local function prepButton(btn)
-		if btn then btn.Active = true end
+		if btn then 
+			btn.Active = true 
+		else
+			warn("Warning: One of the interaction buttons is missing from the template structure!")
+		end
 	end
 	prepButton(moveBB)
 	prepButton(sellBB)
@@ -159,17 +168,28 @@ local function showBBGUI(object)
 
 	if moveBB then
 		moveBB.Activated:Connect(function()
+			print("--- MoveBB Activated ---")
 			local id = object:GetAttribute("BuildId")
+			print("BuildId found for move:", id)
 			removeBBGUI()
-			if id then startMove(object, id) end
+			if id then 
+				startMove(object, id) 
+			else 
+				warn("Cannot run startMove: BuildId attribute is nil!") 
+			end
 		end)
 	end
 
 	if sellBB then
 		sellBB.Activated:Connect(function()
+			print("--- SellBB Activated ---")
 			local id = object:GetAttribute("BuildId")
+			print("BuildId found for sell:", id)
 			if id then
 				deleteEvent:FireServer({ObjectId = id, Reason = "delete"})
+				print("Fired DeleteObject RemoteEvent to server for ID:", id)
+			else
+				warn("Cannot request deletion: BuildId attribute is nil!")
 			end
 			removeBBGUI()
 		end)
@@ -177,9 +197,14 @@ local function showBBGUI(object)
 
 	if storeBB then
 		storeBB.Activated:Connect(function()
+			print("--- StoreBB Activated ---")
 			local id = object:GetAttribute("BuildId")
+			print("BuildId found for store:", id)
 			if id then
 				storeEvent:FireServer({ObjectId = id})
+				print("Fired StoreObject RemoteEvent to server for ID:", id)
+			else
+				warn("Cannot request storage: BuildId attribute is nil!")
 			end
 			removeBBGUI()
 		end)
@@ -187,6 +212,7 @@ local function showBBGUI(object)
 
 	if cancelBB then
 		cancelBB.Activated:Connect(function()
+			print("--- CancelBB Activated ---")
 			removeBBGUI()
 		end)
 	end
@@ -201,9 +227,11 @@ end
 function startMove(object, buildId)
 	if isMoving then return end
 	isMoving = true
+	print("Entering Placement/Move Mode for build item ID:", buildId)
 
 	local asset = findAssetByName(object.Name)
 	if not asset then
+		warn("Move Mode aborted: Could not find base asset model named", object.Name, "in ReplicatedStorage assets folders.")
 		isMoving = false
 		return
 	end
@@ -231,8 +259,8 @@ function startMove(object, buildId)
 	end)
 
 	local function cleanupMove()
+		print("Cleaning up and exiting Move Mode.")
 		cancelMove = nil
-		-- Unbind Context Actions safely
 		ContextActionService:UnbindAction("PlaceObjectAction")
 		ContextActionService:UnbindAction("RotateObjectAction")
 		ContextActionService:UnbindAction("CancelPlacementAction")
@@ -255,7 +283,6 @@ function startMove(object, buildId)
 
 	cancelMove = cleanupMove
 
-	-- Unified Cross-Platform Action Handler
 	local function handlePlacement(actionName, inputState, inputObj)
 		if inputState ~= Enum.UserInputState.Begin then return end
 
@@ -267,6 +294,7 @@ function startMove(object, buildId)
 			local canPlace = PlacingService.CanPlace
 			if not cf or not canPlace then return end
 
+			print("Fired MoveObject confirmation request to server CFrame.")
 			moveEvent:FireServer({ObjectId = buildId, CF = cf})
 			cleanupMove()
 
@@ -278,12 +306,10 @@ function startMove(object, buildId)
 		end
 	end
 
-	-- Bind actions across Keyboard, Touch Buttons, and Gamepads
 	ContextActionService:BindAction("PlaceObjectAction", handlePlacement, true, Enum.UserInputType.MouseButton1, Enum.KeyCode.ButtonA)
 	ContextActionService:BindAction("RotateObjectAction", handlePlacement, true, Settings.RotateY, Enum.KeyCode.ButtonY)
 	ContextActionService:BindAction("CancelPlacementAction", handlePlacement, true, Settings.Cancel, Enum.KeyCode.ButtonB)
 
-	-- Customize touch button text for mobile overlays
 	ContextActionService:SetTitle("PlaceObjectAction", "Place")
 	ContextActionService:SetTitle("RotateObjectAction", "Rotate")
 	ContextActionService:SetTitle("CancelPlacementAction", "Cancel")
@@ -297,7 +323,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if gameProcessed then return end
 	if not buildGui.Enabled then return end
 
-	-- Handle selection inputs: Click, Touch Tap, or Console Selection Button
 	local isValidInput = (input.UserInputType == Enum.UserInputType.MouseButton1) or 
 		(input.UserInputType == Enum.UserInputType.Touch) or
 		(input.KeyCode == Enum.KeyCode.ButtonA)
@@ -306,12 +331,25 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	if isMoving or PlacingService.GetPreview() then return end
 	if player:GetAttribute("DeleteMode") == true then return end
 
-	-- Figure out target screen position based on device type
+	-- Check screen HUD layouts
+	if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+		local mousePos = UserInputService:GetMouseLocation()
+		local guisAtPosition = playerGui:GetGuiObjectsAtPosition(mousePos.X, mousePos.Y)
+
+		for _, guiObject in ipairs(guisAtPosition) do
+			if guiObject.Name ~= "InteractionBB" and not guiObject:IsDescendantOf(bbguiTemplate) and not guiObject:IsDescendantOf(activeBBGUI) then
+				if guiObject:IsA("GuiButton") and guiObject.Visible then
+					print("Selection raycast cancelled: Intercepted by explicit screen menu button:", guiObject.Name)
+					return 
+				end
+			end
+		end
+	end
+
 	local screenPos
 	if input.UserInputType == Enum.UserInputType.Touch or input.UserInputType == Enum.UserInputType.MouseButton1 then
 		screenPos = UserInputService:GetMouseLocation()
 	else
-		-- If console/gamepad, cast directly from the center of the viewport
 		screenPos = camera.ViewportSize / 2
 	end
 
@@ -327,9 +365,7 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	raycastParams.FilterDescendantsInstances = { buildObjects }
 
 	local result = workspace:Raycast(ray.Origin, ray.Direction * 2048, raycastParams)
-	if not result then
-		return
-	end
+	if not result then return end
 
 	local targetObject = result.Instance
 	while targetObject and targetObject.Parent ~= buildObjects do
@@ -337,7 +373,11 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
 	end
 
 	if not targetObject or not targetObject:GetAttribute("BuildId") then return end
-	if selectedObject == targetObject and activeBBGUI then return end
+
+	-- Early escape out of overlapping inputs if identical item clicked while menu active
+	if selectedObject == targetObject and activeBBGUI then 
+		return 
+	end
 
 	showBBGUI(targetObject)
 end)
@@ -359,7 +399,6 @@ buildGui:GetPropertyChangedSignal("Enabled"):Connect(function()
 	end
 end)
 
--- Listen for cancel move requests from other scripts (e.g., BuildActions CancelButton)
 player:GetAttributeChangedSignal("CancelMoveRequest"):Connect(function()
 	if player:GetAttribute("CancelMoveRequest") and isMoving then
 		if cancelMove then cancelMove() end
@@ -459,7 +498,6 @@ local function populateInventory(inventoryData)
 								FromInventory = true,
 							})
 
-							-- If holding Control (PC), keep placement mode open for multi-place
 							if not UserInputService:IsKeyDown(Enum.KeyCode.LeftControl) then
 								cleanupInventoryPlacement()
 							end
