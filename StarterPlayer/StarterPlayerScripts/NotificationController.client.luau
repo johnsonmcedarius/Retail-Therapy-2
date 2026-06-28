@@ -1,0 +1,10 @@
+-- Notifications will go here moving all notifcation guis here also all notifcations will have their on sounds! 
+-- we have PurchaseNotification,DeclineNotification,RestockNotification (which will be moved from shopscript)
+-- also takes your existing template labels, should clone them dynamically 
+-- when an event hits from the network, stacks them cleanly using UIListLayout, 
+--moved all ui under the Notifications screengui
+--and then handles their individual fade-out and destruction timers.
+-- 🌪️ 3. Environment & Weather Systems Placeholder
+-- RemoteEvents.WeatherChanged.OnClientEvent:Connect(function(weatherName)
+--     triggerBoutiqueAlert(`⚡ WEATHER SYSTEM: {string.upper(weatherName)} ACTIVE! ⚡`, "Weather", Color3.fromRGB(0, 225, 255))
+-- end)
