@@ -57,12 +57,14 @@ updateGridLabel()
 -- Delete mode helpers
 local function enterDeleteMode()
 	deleteMode = true
+	player:SetAttribute("DeleteMode", true)
 	deleteButton.ImageColor3 = Color3.fromRGB(255, 100, 100)
 	PlacingService.Cancel()
 end
 
 local function exitDeleteMode()
 	deleteMode = false
+	player:SetAttribute("DeleteMode", false)
 	deleteButton.ImageColor3 = originalDeleteColor
 end
 
