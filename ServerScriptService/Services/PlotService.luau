@@ -112,6 +112,11 @@ function Service.dataLoaded(player: Player)
 	end
 
 	print(`[Plot Claimed] {player.Name} has claimed Plot {plot.Name}`)
+
+	-- Teleport the player to their newly claimed plot if they already have a character
+	if player.Character then
+		Service.characterAdded(player, player.Character)
+	end
 end
 
 -- Clear out settings safely when a player disconnects from the server
@@ -152,8 +157,42 @@ function Service.playerRemoved(player: Player)
 	end
 end
 
+function Service.characterAdded(player: Player, character: Model)
+	local plot = Service.getPlot(player)
+	if not plot then return end
+
+	local spawnPart = plot:FindFirstChild("SpawnLocation")
+	if not spawnPart or not spawnPart:IsA("BasePart") then return end
+
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if not hrp then
+		hrp = character:WaitForChild("HumanoidRootPart", 5)
+		if not hrp then return end
+	end
+
+	-- Teleport the player to their plot's spawn location
+	hrp.CFrame = spawnPart.CFrame + Vector3.new(0, 3, 0)
+end
+
+
 function Service.init()
-	
+	local Players = game:GetService("Players")
+
+	local function setupPlayer(player: Player)
+		player.CharacterAdded:Connect(function(character)
+			Service.characterAdded(player, character)
+		end)
+
+		-- Handle character that already exists (e.g. player joined before init ran)
+		if player.Character then
+			Service.characterAdded(player, player.Character)
+		end
+	end
+
+	Players.PlayerAdded:Connect(setupPlayer)
+	for _, player in ipairs(Players:GetPlayers()) do
+		setupPlayer(player)
+	end
 end
 
 return Service
