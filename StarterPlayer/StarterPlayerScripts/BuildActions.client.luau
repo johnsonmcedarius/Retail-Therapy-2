@@ -131,10 +131,13 @@ deleteButton.MouseButton1Click:Connect(function()
 	end
 end)
 
--- Cancel button also exits delete mode
+-- Cancel button also exits delete mode and cancels ongoing moves
 cancelButton.MouseButton1Click:Connect(function()
 	if deleteMode then
 		exitDeleteMode()
+	end
+	if player:GetAttribute("IsMovingBuild") then
+		player:SetAttribute("CancelMoveRequest", not player:GetAttribute("CancelMoveRequest"))
 	end
 end)
 
