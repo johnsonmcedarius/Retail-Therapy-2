@@ -126,6 +126,15 @@ local function trackRackStockState(rack: Model)
 		-- Automatically updates the boolean dynamically based on actual numerical stock counts
 		rack:SetAttribute("IsStocked", isStocked)
 
+		-- Track if the rack has been stocked at least once
+		if isStocked then
+			rack:SetAttribute("HasBeenStocked", true)
+		end
+		local hasBeenStocked = rack:GetAttribute("HasBeenStocked") or false
+
+		-- Only show out-of-stock visual if the rack has been stocked before and is now empty
+		local showOutOfStock = not isStocked and hasBeenStocked
+
 		-- Toggle Out of Stock GUI visibility
 		local interactionPart = rack:FindFirstChild("InteractionPart")
 		if interactionPart then
@@ -133,7 +142,7 @@ local function trackRackStockState(rack: Model)
 			if outofstockPart then
 				local outofstockGUI = outofstockPart:FindFirstChild("OutofstockGUI")
 				if outofstockGUI and outofstockGUI:IsA("BillboardGui") then
-					outofstockGUI.Enabled = not isStocked
+					outofstockGUI.Enabled = showOutOfStock
 				end
 			end
 		end
