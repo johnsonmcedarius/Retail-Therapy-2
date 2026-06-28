@@ -179,6 +179,7 @@ events.DeleteObject.OnServerEvent:Connect(function(player: Player, arguments: {[
 			end
 
 			object.Parent = trash
+			PlotService.savePlotState(player)
 			break
 		end
 	end
@@ -233,6 +234,7 @@ events.RestoreObject.OnServerEvent:Connect(function(player: Player, arguments: {
 			end
 
 			object.Parent = buildObjects
+			PlotService.savePlotState(player)
 			break
 		end
 	end
@@ -266,6 +268,7 @@ events.StoreObject.OnServerEvent:Connect(function(player: Player, arguments: {[s
 			object.Parent = nil
 
 			sendInventoryUpdate(player)
+			PlotService.savePlotState(player)
 			break
 		end
 	end
@@ -287,6 +290,7 @@ events.MoveObject.OnServerEvent:Connect(function(player: Player, arguments: {[st
 	for _, object in buildObjects:GetChildren() do
 		if object:GetAttribute("BuildId") == objectId then
 			object:PivotTo(CF)
+			PlotService.savePlotState(player)
 			break
 		end
 	end
