@@ -22,6 +22,13 @@ local function updateRackPrompts(rack: Instance)
 	local sprayPrompt = sprayPromptPart and sprayPromptPart:FindFirstChildWhichIsA("ProximityPrompt")
 	local restockPrompt = restockPromptPart and restockPromptPart:FindFirstChildWhichIsA("ProximityPrompt")
 
+	-- If player is moving a build object, hide all prompts
+	if player:GetAttribute("IsMovingBuild") == true then
+		if sprayPrompt then sprayPrompt.Enabled = false end
+		if restockPrompt then restockPrompt.Enabled = false end
+		return
+	end
+
 	-- Fetch stock constraints dynamically
 	local maxSlots = rack:GetAttribute("MaxSlots") or 5
 	local currentStock = rack:GetAttribute("CurrentStock") or 0
@@ -65,6 +72,11 @@ local function setupClientRackPromptTracking(rack: Instance)
 		updateRackPrompts(rack)
 	end)
 end
+
+-- When move mode starts/stops, refresh all prompts globally
+player:GetAttributeChangedSignal("IsMovingBuild"):Connect(function()
+	globalPromptRefresh()
+end)
 
 -- Initialize listeners for current and future streamed-in retail racks
 CollectionService:GetInstanceAddedSignal("RetailRack"):Connect(setupClientRackPromptTracking)
