@@ -1,9 +1,25 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
 
 local cachedModules = require(script.Parent.Parent.Server.CachedModules)
 
 local Service = {}
+
+-- BuildId counter for restored objects (starts high to avoid conflicts with BuildServer's counter)
+local restoreBuildId = 100000
+
+-- Helper: find an asset template by name in BuildMode.Assets
+local function findAsset(objectName: string)
+	local assets = ReplicatedStorage.BuildMode.Assets
+	for _, folder in assets:GetChildren() do
+		if folder:IsA("Folder") then
+			local object = folder:FindFirstChild(objectName)
+			if object then return object end
+		end
+	end
+	return nil
+end
 
 -- Cached asset fallbacks
 local DEFAULT_THUMBNAIL = "rbxassetid://0"
@@ -32,6 +48,84 @@ function Service.getAvailablePlot(player: Player)
 	return nil
 end
 
+-- Serialize all build objects on a player's plot into their saved PlotData
+function Service.savePlotState(player: Player)
+	local plot = Service.getPlot(player)
+	if not plot then return end
+
+	local buildObjects = plot:FindFirstChild("BuildObjects")
+	if not buildObjects then return end
+
+	local dataService = cachedModules.Cache.DataService
+	if not dataService then return end
+	local playerData = dataService.getData(player)
+	if not playerData then return end
+
+	local savedObjects = {}
+	for _, obj in buildObjects:GetChildren() do
+		local pivot = obj:GetPivot()
+		local entry = {
+			Name = obj.Name,
+			CFrame = {pivot:GetComponents()},
+		}
+
+		-- Save rack-specific attributes
+		if CollectionService:HasTag(obj, "RetailRack") then
+			entry.CurrentStock = obj:GetAttribute("CurrentStock") or 0
+			entry.SprayEffect = obj:GetAttribute("SprayEffect") or "None"
+		end
+
+		table.insert(savedObjects, entry)
+	end
+
+	playerData.PlotData = savedObjects
+end
+
+-- Recreate build objects from saved PlotData onto a player's plot
+function Service.restorePlotState(player: Player, plot: Model)
+	local dataService = cachedModules.Cache.DataService
+	if not dataService then return end
+	local playerData = dataService.getData(player)
+	if not playerData or not playerData.PlotData then return end
+
+	-- Ensure BuildObjects folder exists
+	local buildObjects = plot:FindFirstChild("BuildObjects")
+	if not buildObjects then
+		buildObjects = Instance.new("Folder")
+		buildObjects.Name = "BuildObjects"
+		buildObjects.Parent = plot
+	end
+
+	for _, entry in ipairs(playerData.PlotData) do
+		local template = findAsset(entry.Name)
+		if template then
+			local newObject = template:Clone()
+			newObject:PivotTo(CFrame.new(table.unpack(entry.CFrame)))
+
+			-- Restore rack-specific attributes before parenting
+			if CollectionService:HasTag(newObject, "RetailRack") then
+				if entry.CurrentStock then
+					newObject:SetAttribute("CurrentStock", entry.CurrentStock)
+					newObject:SetAttribute("StockAmount", entry.CurrentStock)
+				end
+				if entry.SprayEffect then
+					newObject:SetAttribute("SprayEffect", entry.SprayEffect)
+				end
+			end
+
+			-- Assign a unique BuildId (high range to avoid BuildServer conflicts)
+			newObject:SetAttribute("BuildId", restoreBuildId)
+			restoreBuildId += 1
+
+			newObject.Parent = buildObjects
+		else
+			warn(`[PlotService] Could not find asset template for "{entry.Name}" while restoring plot`)
+		end
+	end
+
+	print(`[PlotService] Restored {#playerData.PlotData} objects for {player.Name}`)
+end
+
 -- Core layout loader for when data loads or when objects are built
 function Service.updatePlot(player: Player, action: string, data: any)
 	local playerData = cachedModules.Cache.DataService.getData(player)
@@ -39,8 +133,7 @@ function Service.updatePlot(player: Player, action: string, data: any)
 
 	if action == "buildPlaced" then
 		print(`[Build Placed] {player.Name} placed "{data.ObjectName}" (ID: {data.ObjectId}) on plot`)
-		-- TODO: Save the placed object to player data here
-		-- Example: table.insert(playerData.PlotObjects, {Name = data.ObjectName, CF = data.CF, BuildId = data.ObjectId})
+		Service.savePlotState(player)
 	end
 end
 
@@ -113,6 +206,9 @@ function Service.dataLoaded(player: Player)
 
 	print(`[Plot Claimed] {player.Name} has claimed Plot {plot.Name}`)
 
+	-- Restore saved build objects and rack states
+	Service.restorePlotState(player, plot)
+
 	-- Teleport the player to their newly claimed plot if they already have a character
 	if player.Character then
 		Service.characterAdded(player, player.Character)
@@ -146,6 +242,9 @@ function Service.playerRemoved(player: Player)
 				avatarGui:Destroy() 
 			end
 		end
+
+		-- Save build objects and rack states before clearing
+		Service.savePlotState(player)
 
 		-- 🧹 Clear all build objects from the plot
 		local buildObjects = foundPlot:FindFirstChild("BuildObjects")
