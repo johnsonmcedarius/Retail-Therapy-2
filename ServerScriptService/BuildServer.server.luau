@@ -28,6 +28,11 @@ local function sendInventoryUpdate(player: Player)
 	events.InventoryUpdate:FireClient(player, playerData.BuildInventory or {})
 end
 
+-- Handle client requesting their current inventory
+events.RequestInventory.OnServerEvent:Connect(function(player: Player)
+	sendInventoryUpdate(player)
+end)
+
 events.Place.OnServerEvent:Connect(function(player: Player, arguments: {[string]: any})
 	local objectName: string = arguments.ObjectName
 	local CF: CFrame = arguments.CF
