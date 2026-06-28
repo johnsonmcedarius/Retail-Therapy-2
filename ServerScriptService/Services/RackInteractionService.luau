@@ -64,6 +64,12 @@ local function onPromptTriggered(prompt, player)
 		-- Apply the premium visual customization via server states
 		sprayEffectService.setSprayEffect(rackModel, sprayName)
 
+		-- Save the updated rack state to player data
+		local plotService = cachedModules.Cache.PlotService
+		if plotService and plotService.savePlotState then
+			plotService.savePlotState(player)
+		end
+
 		-- Deduct a use from the bottle asset
 		remainingUses -= 1
 		equippedTool:SetAttribute("Uses", remainingUses)
@@ -98,6 +104,13 @@ local function onPromptTriggered(prompt, player)
 			-- Instantly max out the stock variables
 			rackModel:SetAttribute("CurrentStock", maxSlots)
 			rackModel:SetAttribute("StockAmount", maxSlots) -- Syncs layout with your custom Plot data fields
+
+			-- Save the updated rack state to player data
+			local plotService = cachedModules.Cache.PlotService
+			if plotService and plotService.savePlotState then
+				plotService.savePlotState(player)
+			end
+
 			print(`[Restock Success] {player.Name} filled {rackModel.Name} for {totalRestockCost} Coins.`)
 		else
 			print(`[Restock Failed] {player.Name} doesn't have enough coins for this restock ({totalRestockCost} Coins required).`)
@@ -109,8 +122,21 @@ end
 local function trackRackStockState(rack: Model)
 	local function verifyStockState()
 		local currentStock = rack:GetAttribute("CurrentStock") or rack:GetAttribute("StockAmount") or 0
+		local isStocked = currentStock > 0
 		-- Automatically updates the boolean dynamically based on actual numerical stock counts
-		rack:SetAttribute("IsStocked", currentStock > 0)
+		rack:SetAttribute("IsStocked", isStocked)
+
+		-- Toggle Out of Stock GUI visibility
+		local interactionPart = rack:FindFirstChild("InteractionPart")
+		if interactionPart then
+			local outofstockPart = interactionPart:FindFirstChild("OutofstockPart")
+			if outofstockPart then
+				local outofstockGUI = outofstockPart:FindFirstChild("OutofstockGUI")
+				if outofstockGUI and outofstockGUI:IsA("BillboardGui") then
+					outofstockGUI.Enabled = not isStocked
+				end
+			end
+		end
 	end
 
 	-- Listen for live stock deductions/additions across the entire server pipeline
