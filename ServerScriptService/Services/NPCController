@@ -1,0 +1,185 @@
+local ServerStorage = game:GetService("ServerStorage")
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+
+local cachedModules = require(script.Parent.Parent.Server.CachedModules)
+
+local NPCController = {}
+
+-- ==========================================
+-- CONFIGURATION
+-- ==========================================
+NPCController.MaxNPCsPerPlot = 5
+-- Seconds between NPC spawns per plot (min/max range)
+NPCController.SpawnInterval = { min = 5, max = 10 }
+-- NPC model names in ServerStorage.NPC folder
+NPCController.NPCNames = { "NPC", "NPC2", "NPC3", "NPC4", "NPC5" }
+
+-- ==========================================
+-- STATE
+-- ==========================================
+-- activeNPCs[plotModel] = {npc1, npc2, ...}
+local activeNPCs = {}
+local customerFolder = nil
+
+-- ==========================================
+-- HELPER FUNCTIONS
+-- ==========================================
+
+-- Clone a random NPC model from ServerStorage.NPC
+local function getRandomNPCModel(): Model?
+	local npcFolder = ServerStorage:FindFirstChild("NPC")
+	if not npcFolder then return nil end
+
+	local name = NPCController.NPCNames[math.random(1, #NPCController.NPCNames)]
+	local template = npcFolder:FindFirstChild(name)
+	if not template then return nil end
+
+	return template:Clone()
+end
+
+-- Get the count of alive NPCs on a plot, cleaning up any destroyed references
+local function getActiveNPCCount(plot: Model): number
+	local npcs = activeNPCs[plot]
+	if not npcs then return 0 end
+
+	for i = #npcs, 1, -1 do
+		if not npcs[i].Parent then
+			table.remove(npcs, i)
+		end
+	end
+
+	return #npcs
+end
+
+-- Spawn a customer NPC at a plot's NPCSpawnZone and hand off to CustomerService
+local function spawnCustomerNPC(plot: Model, spawnZone: BasePart)
+	local npc = getRandomNPCModel()
+	if not npc then
+		warn("[NPCController] Could not clone NPC model from ServerStorage")
+		return
+	end
+
+	-- Position the NPC at the spawn zone with slight randomization
+	local hrp = npc:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		local spawnPosition = spawnZone.Position + Vector3.new(
+			math.random(-3, 3),
+			0,
+			math.random(-3, 3)
+		)
+		hrp.CFrame = CFrame.new(spawnPosition)
+	end
+
+	-- Parent to the CustomerNPCs folder in workspace
+	npc.Parent = customerFolder
+
+	-- Track the NPC on this plot
+	if not activeNPCs[plot] then
+		activeNPCs[plot] = {}
+	end
+	table.insert(activeNPCs[plot], npc)
+
+	-- Hand off to CustomerService for full lifecycle behavior
+	local customerService = cachedModules.Cache.CustomerService
+	if customerService then
+		task.spawn(function()
+			customerService.runCustomer(npc, plot, spawnZone)
+
+			-- Remove from tracking when the lifecycle completes
+			if activeNPCs[plot] then
+				for i, n in ipairs(activeNPCs[plot]) do
+					if n == npc then
+						table.remove(activeNPCs[plot], i)
+						break
+					end
+				end
+			end
+		end)
+	else
+		warn("[NPCController] CustomerService not available in cached modules!")
+		npc.Parent = nil
+	end
+end
+
+-- ==========================================
+-- MAIN SPAWN LOOP
+-- ==========================================
+
+-- Continuously spawns NPCs at active plots that have players present
+local function runSpawnLoop()
+	while true do
+		local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
+		if boutiqueShopService then
+			for _, plot in ipairs(boutiqueShopService.getPlots()) do
+				if not plot:IsA("Model") then continue end
+
+				-- Only spawn if the plot has an active player
+				local isActive = boutiqueShopService.isPlotActive(plot)
+				if isActive then
+					local spawnZone = boutiqueShopService.getSpawnZone(plot)
+					if spawnZone then
+						local currentCount = getActiveNPCCount(plot)
+						if currentCount < NPCController.MaxNPCsPerPlot then
+							spawnCustomerNPC(plot, spawnZone)
+						end
+					end
+				end
+			end
+		end
+
+		-- Wait a random interval before the next spawn cycle
+		local interval = math.random(NPCController.SpawnInterval.min, NPCController.SpawnInterval.max)
+		task.wait(interval)
+	end
+end
+
+-- ==========================================
+-- CLEANUP
+-- ==========================================
+
+-- Remove all active NPCs from a plot when the player leaves
+local function cleanupPlotNPCs(plot: Model)
+	local npcs = activeNPCs[plot]
+	if not npcs then return end
+
+	for _, npc in ipairs(npcs) do
+		if npc.Parent then
+			npc.Parent = nil
+		end
+	end
+
+	activeNPCs[plot] = nil
+	print("[NPCController] Cleaned up NPCs on plot " .. plot.Name .. " (player left)")
+end
+
+-- ==========================================
+-- INITIALIZATION
+-- ==========================================
+
+function NPCController.init()
+	-- Get or create the CustomerNPCs folder in workspace
+	customerFolder = workspace:FindFirstChild("CustomerNPCs")
+	if not customerFolder then
+		customerFolder = Instance.new("Folder")
+		customerFolder.Name = "CustomerNPCs"
+		customerFolder.Parent = workspace
+	end
+
+	-- Start the spawn loop in a background task
+	task.spawn(runSpawnLoop)
+
+	-- Clean up NPCs when a player leaves the server
+	Players.PlayerRemoving:Connect(function(player)
+		for _, plot in ipairs(workspace.Plots:GetChildren()) do
+			if plot:IsA("Model") and plot:GetAttribute("USERID") == player.UserId then
+				cleanupPlotNPCs(plot)
+				break
+			end
+		end
+	end)
+
+	print("[NPCController] Initialized! MaxNPCsPerPlot = " .. NPCController.MaxNPCsPerPlot .. ", SpawnInterval = " .. NPCController.SpawnInterval.min .. "-" .. NPCController.SpawnInterval.max .. "s")
+end
+
+return NPCController
