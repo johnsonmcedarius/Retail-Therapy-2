@@ -1,0 +1,303 @@
+local PathfindingService = game:GetService("PathfindingService")
+local CollectionService = game:GetService("CollectionService")
+local cachedModules = require(script.Parent.Parent.Server.CachedModules)
+
+local CustomerService = {}
+
+-- ==========================================
+-- CUSTOMER STATES
+-- ==========================================
+CustomerService.States = {
+	Spawning = "Spawning",
+	Browsing = "Browsing",
+	WalkingToRegister = "WalkingToRegister",
+	WaitingInLine = "WaitingInLine",
+	CheckingOut = "CheckingOut",
+	Leaving = "Leaving",
+}
+
+-- ==========================================
+-- PATHFINDING HELPER
+-- ==========================================
+
+local function moveToPosition(npc: Model, targetPosition: Vector3): boolean
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+
+	local hrp = npc:FindFirstChild("HumanoidRootPart")
+	if not hrp then return false end
+
+	local path = PathfindingService:CreatePath({
+		AgentRadius = 2,
+		AgentHeight = 5,
+		AgentCanJump = true,
+		AgentJumpHeight = 10,
+		AgentMaxSlope = 45,
+	})
+
+	local success, err = pcall(function()
+		path:ComputeAsync(hrp.Position, targetPosition)
+	end)
+
+	if not success or path.Status ~= Enum.PathStatus.Success then
+		-- Fallback: direct MoveTo if pathfinding fails
+		humanoid:MoveTo(targetPosition)
+		humanoid.MoveToFinished:Wait()
+		return true
+	end
+
+	local waypoints = path:GetWaypoints()
+	for _, waypoint in ipairs(waypoints) do
+		-- Abort if NPC is destroyed or dead
+		if not npc.Parent or not humanoid.Parent then return false end
+		if humanoid.Health <= 0 then return false end
+
+		if waypoint.Action == Enum.PathWaypointAction.Jump then
+			humanoid.Jump = true
+		end
+		humanoid:MoveTo(waypoint.Position)
+		humanoid.MoveToFinished:Wait()
+	end
+
+	return true
+end
+
+-- ==========================================
+-- RACK INTERACTION
+-- ==========================================
+
+-- Find the interaction part on a rack model
+-- Supports both "RackInteractionPart" (user's naming) and "InteractionPart" (existing racks)
+local function getRackInteractionPart(rackModel: Model): BasePart?
+	return rackModel:FindFirstChild("RackInteractionPart") or rackModel:FindFirstChild("InteractionPart")
+end
+
+-- Browse a rack: walk to it and simulate browsing
+-- Returns the calculated payout for this rack, or nil on failure
+local function browseRack(npc: Model, rackModel: Model): number?
+	local interactionPart = getRackInteractionPart(rackModel)
+	if not interactionPart then return nil end
+
+	-- Walk to the rack interaction part
+	local success = moveToPosition(npc, interactionPart.Position)
+	if not success then return nil end
+
+	-- Simulate browsing (wait for a random amount of time)
+	-- TODO: Play browsing animation here when animation assets are available
+	local browseTime = math.random(3, 8)
+	task.wait(browseTime)
+
+	-- Calculate the payout based on this rack's spray multiplier
+	local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
+	if not boutiqueShopService then return nil end
+
+	return boutiqueShopService.calculatePayout(rackModel)
+end
+
+-- ==========================================
+-- CHECKOUT PROCESS
+-- ==========================================
+
+-- Wait in line at a register, moving forward when position changes
+-- Returns true when the NPC reaches position 1 (front of the line)
+local function waitInLine(npc: Model, registerModel: Model, startPosition: number): boolean
+	local checkoutService = cachedModules.Cache.CheckoutService
+	if not checkoutService then return false end
+
+	local lastPosition = startPosition
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+
+	-- Move to the initial queue point
+	local queuePoint = checkoutService.getQueuePoint(registerModel, startPosition)
+	if queuePoint then
+		moveToPosition(npc, queuePoint.Position)
+	end
+
+	-- Poll for position changes until we reach the front
+	while true do
+		if not npc.Parent or humanoid.Health <= 0 then return false end
+
+		local currentPos = checkoutService.getPositionInQueue(registerModel, npc)
+
+		if currentPos == 1 then
+			-- We are first in line! Move to QueuePoint_1
+			local queuePoint1 = checkoutService.getQueuePoint(registerModel, 1)
+			if queuePoint1 then
+				moveToPosition(npc, queuePoint1.Position)
+			end
+			return true
+		elseif currentPos == nil then
+			-- No longer in queue
+			return false
+		elseif currentPos ~= lastPosition then
+			-- Position changed (someone ahead finished), move to new queue point
+			lastPosition = currentPos
+			local newQueuePoint = checkoutService.getQueuePoint(registerModel, currentPos)
+			if newQueuePoint then
+				moveToPosition(npc, newQueuePoint.Position)
+			end
+		end
+
+		task.wait(0.5)
+	end
+end
+
+-- Perform the checkout at a register
+-- Waits for staff, processes the transaction, awards payout
+local function performCheckout(npc: Model, registerModel: Model, payout: number, plot: Model): boolean
+	local checkoutService = cachedModules.Cache.CheckoutService
+	if not checkoutService then return false end
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if not humanoid then return false end
+
+	-- Wait for the register to be staffed (IsStaffed == true)
+	while not checkoutService.isStaffed(registerModel) do
+		if not npc.Parent or humanoid.Health <= 0 then return false end
+		task.wait(0.5)
+	end
+
+	-- Checkout process: wait for the configured checkout time
+	local checkoutTime = checkoutService.getCheckoutTime()
+	task.wait(checkoutTime)
+
+	if not npc.Parent or humanoid.Health <= 0 then return false end
+
+	-- Award payout to the plot owner
+	local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
+	if boutiqueShopService then
+		boutiqueShopService.awardPayout(plot, payout)
+	end
+
+	-- Remove from queue (this shifts everyone forward automatically)
+	checkoutService.removeCustomer(registerModel, npc)
+
+	return true
+end
+
+-- ==========================================
+-- MAIN CUSTOMER LIFECYCLE
+-- ==========================================
+
+-- Run the full lifecycle of a single customer NPC
+-- States: Spawn -> Browse Rack -> Walk to Register -> Wait in Line -> Checkout -> Leave
+function CustomerService.runCustomer(npc: Model, plot: Model, spawnZone: BasePart)
+	if not npc or not plot or not spawnZone then return end
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+	if not humanoid then
+		warn("[CustomerService] NPC has no Humanoid, aborting lifecycle")
+		if npc.Parent then npc.Parent = nil end
+		return
+	end
+
+	local state = CustomerService.States.Spawning
+	local payout = nil
+
+	local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
+	local checkoutService = cachedModules.Cache.CheckoutService
+
+	if not boutiqueShopService or not checkoutService then
+		warn("[CustomerService] Required services not available")
+		if npc.Parent then npc.Parent = nil end
+		return
+	end
+
+	-- ==========================================
+	-- STATE: BROWSING - Walk to a random fabric rack and browse
+	-- ==========================================
+	state = CustomerService.States.Browsing
+
+	local racks = boutiqueShopService.getRacksOnPlot(plot)
+
+	if #racks > 0 then
+		-- Pick a random rack to browse
+		local rack = racks[math.random(1, #racks)]
+		payout = browseRack(npc, rack)
+	else
+		-- No racks on the plot - wait briefly then proceed with base price
+		task.wait(2)
+		payout = boutiqueShopService.BasePrice
+	end
+
+	-- Abort if NPC was destroyed or died while browsing
+	if not npc.Parent or humanoid.Health <= 0 then
+		if npc.Parent then npc.Parent = nil end
+		return
+	end
+
+	-- ==========================================
+	-- STATE: WALKING TO REGISTER
+	-- ==========================================
+	state = CustomerService.States.WalkingToRegister
+
+	if payout then
+		local registers = boutiqueShopService.getRegistersOnPlot(plot)
+
+		if #registers > 0 then
+			-- Pick the first register (could be extended to pick shortest line)
+			local register = registers[1]
+
+			-- Register with CheckoutService (First Come, First Served)
+			local position = checkoutService.addCustomer(register, npc)
+
+			if position == 1 then
+				state = CustomerService.States.CheckingOut
+			else
+				state = CustomerService.States.WaitingInLine
+			end
+
+			-- ==========================================
+			-- STATE: WAITING IN LINE - Move forward when people ahead finish
+			-- ==========================================
+			if position > 1 then
+				local success = waitInLine(npc, register, position)
+				if not success then
+					-- NPC was destroyed or removed from queue while waiting
+					checkoutService.removeCustomer(register, npc)
+					if npc.Parent then npc.Parent = nil end
+					return
+				end
+				state = CustomerService.States.CheckingOut
+			end
+
+			-- ==========================================
+			-- STATE: CHECKING OUT - Pay and complete transaction
+			-- ==========================================
+			local checkoutSuccess = performCheckout(npc, register, payout, plot)
+			if not checkoutSuccess then
+				checkoutService.removeCustomer(register, npc)
+				if npc.Parent then npc.Parent = nil end
+				return
+			end
+		else
+			-- No registers on the plot - customer leaves without checking out
+			print("[CustomerService] No registers on plot " .. plot.Name .. ", customer leaving")
+		end
+	end
+
+	-- ==========================================
+	-- STATE: LEAVING - Walk back to NPCSpawnZone (exit point)
+	-- ==========================================
+	state = CustomerService.States.Leaving
+
+	if npc.Parent and humanoid.Health > 0 then
+		moveToPosition(npc, spawnZone.Position)
+	end
+
+	-- Clean up the NPC
+	if npc.Parent then
+		npc.Parent = nil
+	end
+end
+
+-- ==========================================
+-- INITIALIZATION
+-- ==========================================
+
+function CustomerService.init()
+	print("[CustomerService] Initialized! Customer lifecycle ready")
+end
+
+return CustomerService
