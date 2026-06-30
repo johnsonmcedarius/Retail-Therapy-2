@@ -1,0 +1,117 @@
+local Players = game:GetService("Players")
+local CollectionService = game:GetService("CollectionService")
+local cachedModules = require(script.Parent.Parent.Server.CachedModules)
+
+local BoutiqueShopService = {}
+
+-- ==========================================
+-- CONFIGURATION
+-- ==========================================
+-- Base price per item before spray multipliers are applied
+BoutiqueShopService.BasePrice = 100
+-- Maximum concurrent customer NPCs allowed per plot
+BoutiqueShopService.MaxNPCsPerPlot = 5
+-- Seconds between NPC spawns per plot (min/max range)
+BoutiqueShopService.SpawnInterval = { min = 5, max = 10 }
+
+-- ==========================================
+-- PLOT MANAGEMENT
+-- ==========================================
+
+-- Get all plot models in the workspace
+function BoutiqueShopService.getPlots(): { Model }
+	return workspace.Plots:GetChildren()
+end
+
+-- Check if a plot has an active player present in the server
+-- Returns (isActive: boolean, player: Player?)
+function BoutiqueShopService.isPlotActive(plot: Model): (boolean, Player?)
+	if plot:GetAttribute("Taken") ~= true then return false end
+
+	local userId = plot:GetAttribute("USERID")
+	if not userId or userId == 0 or userId == "" then return false end
+
+	for _, player in ipairs(Players:GetPlayers()) do
+		if player.UserId == userId then
+			return true, player
+		end
+	end
+	return false
+end
+
+-- Get the NPCSpawnZone part for a plot (used as both spawn AND exit point)
+function BoutiqueShopService.getSpawnZone(plot: Model): BasePart?
+	return plot:FindFirstChild("NPCSpawnZone")
+end
+
+-- ==========================================
+-- RACK & REGISTER DISCOVERY
+-- ==========================================
+
+-- Get all fabric racks (RetailRack tagged) on a plot
+-- Works with current racks AND future racks placed during gameplay
+function BoutiqueShopService.getRacksOnPlot(plot: Model): { Model }
+	local buildObjects = plot:FindFirstChild("BuildObjects")
+	if not buildObjects then return {} end
+
+	local racks = {}
+	for _, obj in ipairs(buildObjects:GetChildren()) do
+		if CollectionService:HasTag(obj, "RetailRack") then
+			table.insert(racks, obj)
+		end
+	end
+	return racks
+end
+
+-- Get all cash registers (CashRegister tagged) on a plot
+function BoutiqueShopService.getRegistersOnPlot(plot: Model): { Model }
+	local buildObjects = plot:FindFirstChild("BuildObjects")
+	if not buildObjects then return {} end
+
+	local registers = {}
+	for _, obj in ipairs(buildObjects:GetChildren()) do
+		if CollectionService:HasTag(obj, "CashRegister") then
+			table.insert(registers, obj)
+		end
+	end
+	return registers
+end
+
+-- ==========================================
+-- PAYOUT CALCULATION
+-- ==========================================
+
+-- Calculate the payout for a rack purchase
+-- Formula: Payout = Base Price x Spray Multiplier
+-- Example: BasePrice=100, Vamp Era spray=10.0 -> Payout=1000
+function BoutiqueShopService.calculatePayout(rackModel: Model): number
+	local sprayEffectService = cachedModules.Cache.SprayEffectService
+	if not sprayEffectService then
+		return BoutiqueShopService.BasePrice
+	end
+
+	local multiplier = sprayEffectService.getMultiplier(rackModel)
+	return BoutiqueShopService.BasePrice * multiplier
+end
+
+-- Award money to the plot owner when a customer pays
+function BoutiqueShopService.awardPayout(plot: Model, amount: number)
+	local isActive, player = BoutiqueShopService.isPlotActive(plot)
+	if not isActive or not player then return end
+
+	local moneyService = cachedModules.Cache.MoneyService
+	if moneyService and moneyService.giveCoins then
+		moneyService.giveCoins(player, amount)
+		print("[BoutiqueShopService] Awarded " .. amount .. " coins to " .. player.Name .. " (Plot " .. plot.Name .. ")")
+	end
+end
+
+-- ==========================================
+-- INITIALIZATION
+-- ==========================================
+
+function BoutiqueShopService.init()
+	print("[BoutiqueShopService] Initialized! BasePrice = " .. BoutiqueShopService.BasePrice .. ", MaxNPCsPerPlot = " .. BoutiqueShopService.MaxNPCsPerPlot)
+end
+
+return BoutiqueShopService
