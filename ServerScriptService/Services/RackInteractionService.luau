@@ -27,6 +27,19 @@ local function onPromptTriggered(prompt, player)
 	end
 	if not rackModel then return end
 
+	-- Plot ownership security block: Don't let player interact with someone else's rack!
+	local plot = rackModel:FindFirstAncestorOfClass("Model")
+	while plot and plot.Parent ~= workspace.Plots do
+		plot = plot.Parent
+	end
+	if plot then
+		local ownerId = plot:GetAttribute("USERID")
+		if ownerId ~= player.UserId then
+			print(`[Security Warning] {player.Name} tried to interact with a rack on another player's plot!`)
+			return
+		end
+	end
+
 	-- The prompt's parent Part is named "RetailSprayPrompt" or "RetailRestockPrompt"
 	local promptPartName = prompt.Parent and prompt.Parent.Name or ""
 
