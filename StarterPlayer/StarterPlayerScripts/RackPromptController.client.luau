@@ -38,13 +38,25 @@ local function updateRackPrompts(rack: Instance)
 		return
 	end
 
+	-- Plot Ownership Check on client side: Completely hide prompts for other players' plots!
+	local plot = rack:FindFirstAncestorOfClass("Model")
+	while plot and plot.Parent ~= workspace.Plots do
+		plot = plot.Parent
+	end
+	if plot then
+		local ownerId = plot:GetAttribute("USERID")
+		if ownerId ~= player.UserId then
+			if sprayPrompt then sprayPrompt.Enabled = false end
+			if restockPrompt then restockPrompt.Enabled = false end
+			return
+		end
+	end
+
 	-- Fetch stock constraints dynamically
 	local maxSlots = rack:GetAttribute("MaxSlots") or 5
 	local currentStock = rack:GetAttribute("CurrentStock")
 	if currentStock == nil then currentStock = rack:GetAttribute("StockAmount") end
 
-	-- ✅ FIX: Instead of completely bailing and freezing, turn them off 
-	-- safely until the server data fully replicates over the network.
 	if currentStock == nil then 
 		if sprayPrompt then sprayPrompt.Enabled = false end
 		if restockPrompt then restockPrompt.Enabled = false end
@@ -57,7 +69,6 @@ local function updateRackPrompts(rack: Instance)
 
 	local holdingSpray = getHoldingSprayState()
 
-	-- ✅ FIX: Decouple the prompts! If one is slow to load, it won't brick the other.
 	if sprayPrompt then
 		sprayPrompt.Enabled = holdingSpray
 	end
@@ -90,8 +101,6 @@ end
 local function setupClientRackPromptTracking(rack: Instance)
 	updateRackPrompts(rack)
 
-	-- ✅ FIX: Listen to the entire suite of state attributes. 
-	-- Whichever one lands first from replication will instantly force a UI correction.
 	rack:GetAttributeChangedSignal("CurrentStock"):Connect(function()
 		updateRackPrompts(rack)
 	end)
