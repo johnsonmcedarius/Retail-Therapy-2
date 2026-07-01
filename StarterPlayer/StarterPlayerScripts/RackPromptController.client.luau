@@ -7,8 +7,17 @@ local ATTACHMENT_NAME = "InteractionPart"
 -- Helper to safely grab the live tool state of the local avatar
 local function getHoldingSprayState()
 	local character = player.Character
-	local equippedTool = character and character:FindFirstChildWhichIsA("Tool")
-	return equippedTool and equippedTool:GetAttribute("isSpray") == true
+
+	-- STRICT HAND CHECK ONLY
+	if character then
+		for _, tool in character:GetChildren() do
+			if tool:IsA("Tool") and tool:GetAttribute("isSpray") == true then
+				return true
+			end
+		end
+	end
+
+	return false
 end
 
 -- Universal prompt visibility manager
@@ -31,17 +40,31 @@ local function updateRackPrompts(rack: Instance)
 
 	-- Fetch stock constraints dynamically
 	local maxSlots = rack:GetAttribute("MaxSlots") or 5
-	local currentStock = rack:GetAttribute("CurrentStock") or 0
-	local isFull = currentStock >= maxSlots
-	local isEmpty = currentStock <= 0
+	local currentStock = rack:GetAttribute("CurrentStock")
+	if currentStock == nil then currentStock = rack:GetAttribute("StockAmount") end
+
+	-- ✅ FIX: Instead of completely bailing and freezing, turn them off 
+	-- safely until the server data fully replicates over the network.
+	if currentStock == nil then 
+		if sprayPrompt then sprayPrompt.Enabled = false end
+		if restockPrompt then restockPrompt.Enabled = false end
+		return 
+	end 
+
+	-- Pull the new boolean you added (or fallback to math just in case)
+	local isEmpty = rack:GetAttribute("IsEmpty")
+	if isEmpty == nil then isEmpty = (currentStock <= 0) end
+
 	local holdingSpray = getHoldingSprayState()
 
-	if sprayPrompt and restockPrompt then
-		-- Spray prompts display ONLY when actively holding a spray bottle, nothing else
+	-- ✅ FIX: Decouple the prompts! If one is slow to load, it won't brick the other.
+	if sprayPrompt then
 		sprayPrompt.Enabled = holdingSpray
+	end
 
-		-- Restock prompts hide if player is holding a spray OR if the rack is already full
-		restockPrompt.Enabled = not holdingSpray and not isFull
+	if restockPrompt then
+		-- Restock prompts hide if player is holding a spray OR if the rack is not completely empty
+		restockPrompt.Enabled = not holdingSpray and isEmpty
 	end
 end
 
@@ -67,8 +90,18 @@ end
 local function setupClientRackPromptTracking(rack: Instance)
 	updateRackPrompts(rack)
 
-	-- Force prompts to instantly update on screen when stock counts fluctuate live
+	-- ✅ FIX: Listen to the entire suite of state attributes. 
+	-- Whichever one lands first from replication will instantly force a UI correction.
 	rack:GetAttributeChangedSignal("CurrentStock"):Connect(function()
+		updateRackPrompts(rack)
+	end)
+	rack:GetAttributeChangedSignal("StockAmount"):Connect(function()
+		updateRackPrompts(rack)
+	end)
+	rack:GetAttributeChangedSignal("IsEmpty"):Connect(function()
+		updateRackPrompts(rack)
+	end)
+	rack:GetAttributeChangedSignal("IsStocked"):Connect(function()
 		updateRackPrompts(rack)
 	end)
 end
@@ -84,5 +117,12 @@ for _, rack in ipairs(CollectionService:GetTagged("RetailRack")) do
 	task.spawn(setupClientRackPromptTracking, rack)
 end
 
-if player.Character then setupCharacterEquipListeners(player.Character) end
-player.CharacterAdded:Connect(setupCharacterEquipListeners)
+if player.Character then 
+	setupCharacterEquipListeners(player.Character) 
+	globalPromptRefresh()
+end
+
+player.CharacterAdded:Connect(function(char)
+	setupCharacterEquipListeners(char)
+	globalPromptRefresh()
+end)
