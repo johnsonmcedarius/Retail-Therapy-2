@@ -71,7 +71,9 @@ function Service.savePlotState(player: Player)
 
 		-- Save rack-specific attributes
 		if CollectionService:HasTag(obj, "RetailRack") then
-			entry.CurrentStock = obj:GetAttribute("CurrentStock") or 0
+			-- 🔥 FIX: Prioritize CurrentStock, then StockAmount, default to 0 if empty
+			local liveStock = obj:GetAttribute("CurrentStock") or obj:GetAttribute("StockAmount") or 0
+			entry.CurrentStock = liveStock
 			entry.SprayEffect = obj:GetAttribute("SprayEffect") or "None"
 		end
 
@@ -220,6 +222,9 @@ function Service.playerRemoved(player: Player)
 	local foundPlot = Service.getPlot(player)
 
 	if foundPlot then
+		-- 🔥 FIX: Save the plot state BEFORE modifying ownership attributes or unparenting objects!
+		Service.savePlotState(player)
+
 		foundPlot:SetAttribute("Taken", false)
 		foundPlot:SetAttribute("USERID", 0)
 
@@ -243,14 +248,11 @@ function Service.playerRemoved(player: Player)
 			end
 		end
 
-		-- Save build objects and rack states before clearing
-		Service.savePlotState(player)
-
-		-- 🧹 Clear all build objects from the plot
+		-- 🧹 Clear all build objects from the plot and clean up memory properly
 		local buildObjects = foundPlot:FindFirstChild("BuildObjects")
 		if buildObjects then
 			for _, obj in buildObjects:GetChildren() do
-				obj.Parent = nil
+				obj:Destroy() -- Use :Destroy() instead of .Parent = nil
 			end
 		end
 	end
