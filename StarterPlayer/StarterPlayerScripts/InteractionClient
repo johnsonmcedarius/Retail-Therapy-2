@@ -11,6 +11,7 @@ local modules = script.Parent:WaitForChild("Modules")
 local PlacingService = require(modules:WaitForChild("PlacingService"))
 local Settings = require(ReplicatedStorage.BuildMode:WaitForChild("Settings"))
 local Trove = require(ReplicatedStorage.Libraries:WaitForChild("Trove"))
+local BuildHistory = require(ReplicatedStorage.BuildMode:WaitForChild("Modules"):WaitForChild("BuildHistory"))
 
 local events = ReplicatedStorage:WaitForChild("RemoteEvents")
 local deleteEvent = events:FindFirstChild("DeleteObject")
@@ -91,14 +92,10 @@ local function setRackVisualsHidden(rack, hidden)
 	local interactionPart = rack:FindFirstChild("InteractionPart", true)
 	if not interactionPart then return end
 
-	-- ✅ FIXED BUG: Removed the ProximityPrompt force-toggling loop that was breaking the Spray/Restock states. 
-	-- RackPromptController natively listens for the "IsMovingBuild" attribute, let it do its job cleanly!
-
 	-- Toggle out-of-stock part
 	local outofstockPart = interactionPart:FindFirstChild("OutofstockPart")
 	if outofstockPart and outofstockPart:IsA("BasePart") then
 		outofstockPart.Transparency = hidden and 1 or 0
-		-- Removed GUI "Enabled" override here so it doesn't accidentally trigger a fake sold-out sign
 	end
 end
 
@@ -136,8 +133,6 @@ local function showBBGUI(object)
 	clone.Enabled = true
 	clone.Active = true 
 
-	-- FIX FROM VIDEO: Parent it to PlayerGui so buttons receive clicks,
-	-- but set Adornee to the 3D part so it tracks it in space.
 	local adornee = getAdornee(object)
 	clone.Adornee = adornee
 	clone.Parent = playerGui
@@ -179,8 +174,19 @@ local function showBBGUI(object)
 			local id = object:GetAttribute("BuildId")
 			print("BuildId found for sell:", id)
 			if id then
+				local objectName = object.Name
+				local cframe = object:GetPivot()
+
 				deleteEvent:FireServer({ObjectId = id, Reason = "delete"})
 				print("Fired DeleteObject RemoteEvent to server for ID:", id)
+
+				-- Push to undo stack!
+				BuildHistory.pushUndo({
+					action = "Delete",
+					objectName = objectName,
+					cframe = cframe,
+					objectId = id,
+				})
 			else
 				warn("Cannot request deletion: BuildId attribute is nil!")
 			end
@@ -228,6 +234,8 @@ function startMove(object, buildId)
 		isMoving = false
 		return
 	end
+
+	local originalCF = object:GetPivot() -- Track starting location for undo functionality
 
 	local partStates = collectPartStates(object)
 	for _, state in partStates do
@@ -289,6 +297,15 @@ function startMove(object, buildId)
 
 			print("Fired MoveObject confirmation request to server CFrame.")
 			moveEvent:FireServer({ObjectId = buildId, CF = cf})
+
+			-- Hook successfully into undo/redo system for Moves!
+			BuildHistory.pushUndo({
+				action = "Move",
+				objectId = buildId,
+				oldCF = originalCF,
+				newCF = cf,
+			})
+
 			cleanupMove()
 
 		elseif actionName == "RotateObjectAction" then
