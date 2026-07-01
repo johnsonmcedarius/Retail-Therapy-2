@@ -1,0 +1,72 @@
+local CustomerAIService = {}
+
+-- ==========================================
+-- CUSTOMER TYPE DEFINITIONS
+-- ==========================================
+-- Each type defines spending behavior, item limits, and spawn probability
+-- SpawnWeight: relative weight for random selection (higher = more common)
+-- SpendMultiplier: multiplier applied to the final payout at checkout
+-- MaxItems: maximum number of items this customer type can purchase per visit
+-- BudgetModifier: flavor / future use for budget caps
+
+CustomerAIService.CustomerTypes = {
+	Regular = {
+		SpawnWeight = 80,
+		SpendMultiplier = 1.0,
+		MaxItems = 3,
+		BudgetModifier = 1.0,
+	},
+	VIP = {
+		SpawnWeight = 20,
+		SpendMultiplier = 3.0,
+		MaxItems = 5,
+		BudgetModifier = 3.0,
+	},
+}
+
+-- ==========================================
+-- TYPE SELECTION
+-- ==========================================
+
+-- Roll a random customer type based on spawn weights
+-- Returns true for VIP, false for Regular
+function CustomerAIService.rollCustomerType(): boolean
+	local totalWeight = 0
+	for _, typeConfig in pairs(CustomerAIService.CustomerTypes) do
+		totalWeight += typeConfig.SpawnWeight
+	end
+
+	local roll = math.random(1, totalWeight)
+	local cumulative = 0
+	for typeName, typeConfig in pairs(CustomerAIService.CustomerTypes) do
+		cumulative += typeConfig.SpawnWeight
+		if roll <= cumulative then
+			return typeName == "VIP"
+		end
+	end
+
+	return false
+end
+
+-- Get the configuration for a customer type
+-- Pass isVIP=true for VIP, false for Regular
+function CustomerAIService.getCustomerTypeConfig(isVIP: boolean)
+	if isVIP then
+		return CustomerAIService.CustomerTypes.VIP
+	end
+	return CustomerAIService.CustomerTypes.Regular
+end
+
+-- ==========================================
+-- INITIALIZATION
+-- ==========================================
+
+function CustomerAIService.init()
+	local typeCount = 0
+	for _ in pairs(CustomerAIService.CustomerTypes) do
+		typeCount += 1
+	end
+	print("[CustomerAIService] Initialized! " .. typeCount .. " customer types: Regular (80%), VIP (20%)")
+end
+
+return CustomerAIService
