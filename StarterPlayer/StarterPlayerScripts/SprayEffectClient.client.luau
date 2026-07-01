@@ -6,11 +6,20 @@ local MutationsFolder = Modules:WaitForChild("Mutations")
 
 -- Cache our dynamic visual mutation module blocks
 local mutationModules = {}
-for _, child in ipairs(MutationsFolder:GetChildren()) do
-	if child:IsA("ModuleScript") then
-		local cleanName = string.gsub(child.Name, " ", "")
-		mutationModules[cleanName] = require(child)
+
+-- ✅ FIXED BUG: A dynamic fetcher that guarantees late-loading modules are caught when a player rejoins
+local function getMutationModule(effectName)
+	local cleanName = string.gsub(effectName, " ", "")
+	if mutationModules[cleanName] then return mutationModules[cleanName] end
+
+	for _, child in ipairs(MutationsFolder:GetChildren()) do
+		if child:IsA("ModuleScript") then
+			local childCleanName = string.gsub(child.Name, " ", "")
+			mutationModules[childCleanName] = require(child)
+		end
 	end
+
+	return mutationModules[cleanName]
 end
 
 local SprayEffectClient = {}
@@ -21,8 +30,12 @@ local SprayEffectClient = {}
 
 -- 🛒 DYNAMIC VISUAL STOCK CONTROLLER
 local function updateVisualStock(rack: Instance)
-	-- Support both attribute names to prevent breaking legacy systems
-	local currentStock = rack:GetAttribute("CurrentStock") or rack:GetAttribute("StockAmount") or 0
+	-- Wait for real replicated data. Do not assume 0 if nil!
+	local currentStock = rack:GetAttribute("CurrentStock")
+	if currentStock == nil then currentStock = rack:GetAttribute("StockAmount") end
+
+	if currentStock == nil then return end 
+
 	local displayFolder = rack:FindFirstChild("DisplayItems")
 
 	if displayFolder then
@@ -43,7 +56,8 @@ end
 
 -- 🎨 VISUAL SPRAY COATING CONTROL
 local function handleRackEffect(rack: Instance)
-	local currentEffect = rack:GetAttribute("SprayEffect") or "None"
+	local currentEffect = rack:GetAttribute("SprayEffect")
+	if currentEffect == nil then return end -- Await replication
 
 	-- Clean up any old moving textures/particles first
 	for _, module in pairs(mutationModules) do
@@ -54,9 +68,8 @@ local function handleRackEffect(rack: Instance)
 
 	-- Run the local RenderStepped visual loops if a spray is active
 	if currentEffect ~= "None" then
-		-- Clean the string layout (e.g., "Dew Drop Spray" -> "DewDropSpray")
-		local cleanModuleName = string.gsub(currentEffect, " ", "")
-		local targetModule = mutationModules[cleanModuleName]
+		-- Dynamically fetch to solve the Rejoin / late-streaming bug
+		local targetModule = getMutationModule(currentEffect)
 
 		if targetModule and targetModule.applyEffect then
 			targetModule.applyEffect(rack)
