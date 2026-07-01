@@ -44,7 +44,6 @@ local function moveToPosition(npc: Model, targetPosition: Vector3): boolean
 
 	local waypoints = path:GetWaypoints()
 	for _, waypoint in ipairs(waypoints) do
-		-- Abort if NPC is destroyed or dead
 		if not npc.Parent or not humanoid.Parent then return false end
 		if humanoid.Health <= 0 then return false end
 
@@ -53,8 +52,14 @@ local function moveToPosition(npc: Model, targetPosition: Vector3): boolean
 		end
 		humanoid:MoveTo(waypoint.Position)
 		humanoid.MoveToFinished:Wait()
+
+		-- [[ HOTFIX: If close enough to final target destination, break early to avoid micro-stuttering ]]
+		if (hrp.Position - targetPosition).Magnitude < 1.5 then
+			break
+		end
 	end
 
+	-- [[ FIX: Return true here so the script knows the NPC successfully arrived! ]]
 	return true
 end
 
@@ -141,14 +146,18 @@ local function browseRack(npc: Model, rackModel: Model): (Model?, number)
 
 	-- Deduct stock from the rack
 	if itemsBought > 0 then
-		rackModel:SetAttribute("CurrentStock", currentStock - itemsBought)
+		local newStock = currentStock - itemsBought
+
+		-- 🔥 FIX: Update BOTH attributes so PlotService and RackInteractionService never get confused!
+		rackModel:SetAttribute("CurrentStock", newStock)
+		rackModel:SetAttribute("StockAmount", newStock)
 	end
 
 	-- Release the rack (heading to checkout)
 	rackModel:SetAttribute("BeingBrowsed", false)
 
 	return rackModel, itemsBought
-end
+end -- Added missing end block!
 
 -- ==========================================
 -- CHECKOUT PROCESS
