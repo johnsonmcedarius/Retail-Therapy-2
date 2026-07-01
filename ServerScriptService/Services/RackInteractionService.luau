@@ -35,27 +35,30 @@ local function onPromptTriggered(prompt, player)
 	-- ==========================================
 	if promptPartName == "RetailSprayPrompt" then
 		-- BULLETPROOF EQUIPPED LOOKUP GATE
-		local equippedTool = character:FindFirstChildWhichIsA("Tool")
+		local validSprayTool = nil
 
-		-- Fallback to inventory tracking if replication frames are lagging
-		if not equippedTool then
-			equippedTool = player.Backpack:FindFirstChildWhichIsA("Tool")
+		-- 1. STRICT EQUIPPED CHECK: Must be actively in hands!
+		for _, tool in character:GetChildren() do
+			if tool:IsA("Tool") and tool:GetAttribute("isSpray") == true then
+				validSprayTool = tool
+				break
+			end
 		end
 
-		if not equippedTool or not equippedTool:GetAttribute("isSpray") then
+		if not validSprayTool then
 			print("❌ Player does not have a spray bottle equipped!")
 			return
 		end
 
 		-- SMART RECOVERY: Fallback to attribute first, then tool text name string
-		local sprayID = equippedTool:GetAttribute("sprayID")
-		local sprayName = equippedTool:GetAttribute("SprayName") or equippedTool:GetAttribute("Name") or equippedTool.Name
+		local sprayID = validSprayTool:GetAttribute("sprayID")
+		local sprayName = validSprayTool:GetAttribute("SprayName") or validSprayTool:GetAttribute("Name") or validSprayTool.Name
 
 		-- Clean name text if it already has usage counters appended (e.g., "Dew Drop Spray (4 Uses)" -> "Dew Drop Spray")
 		sprayName = string.gsub(sprayName, "%s*%([0-9]+%s*[Uu]ses%)", "")
 
 		-- Verify durability / remaining uses on the tool instance cleanly
-		local remainingUses = equippedTool:GetAttribute("Uses") or equippedTool:GetAttribute("UsesLeft") or 5
+		local remainingUses = validSprayTool:GetAttribute("Uses") or validSprayTool:GetAttribute("UsesLeft") or 5
 		if remainingUses <= 0 then 
 			print("⚠️ This spray bottle is completely empty!")
 			return 
@@ -72,8 +75,8 @@ local function onPromptTriggered(prompt, player)
 
 		-- Deduct a use from the bottle asset
 		remainingUses -= 1
-		equippedTool:SetAttribute("Uses", remainingUses)
-		equippedTool:SetAttribute("UsesLeft", remainingUses)
+		validSprayTool:SetAttribute("Uses", remainingUses)
+		validSprayTool:SetAttribute("UsesLeft", remainingUses)
 
 		if remainingUses <= 0 then
 			-- Wipe it cleanly from database memory profile tables if empty
@@ -81,7 +84,7 @@ local function onPromptTriggered(prompt, player)
 			inventoryService.removeItem(player, sprayID, 1)
 		else
 			-- Update display name layout dynamically while preserving internal base configurations
-			equippedTool.Name = `{sprayName} ({remainingUses} Uses)`
+			validSprayTool.Name = `{sprayName} ({remainingUses} Uses)`
 		end
 
 		-- ==========================================
@@ -89,7 +92,12 @@ local function onPromptTriggered(prompt, player)
 		-- ==========================================
 	elseif promptPartName == "RetailRestockPrompt" then
 		local maxSlots = rackModel:GetAttribute("MaxSlots") or 5
-		local currentStock = rackModel:GetAttribute("CurrentStock") or rackModel:GetAttribute("StockAmount") or 0
+		local currentStock = rackModel:GetAttribute("CurrentStock")
+		if currentStock == nil then currentStock = rackModel:GetAttribute("StockAmount") end
+
+		-- Safety catch just in case it hasn't replicated yet
+		if currentStock == nil then return end
+
 		local costPerItem = rackModel:GetAttribute("RestockCostPerItem") or 0
 
 		-- If the rack is already packed out, ignore the input
@@ -121,28 +129,27 @@ end
 -- Automated listener treating CurrentStock as the absolute source of truth for IsStocked
 local function trackRackStockState(rack: Model)
 	local function verifyStockState()
-		local currentStock = rack:GetAttribute("CurrentStock") or rack:GetAttribute("StockAmount") or 0
+		local currentStock = rack:GetAttribute("CurrentStock")
+		if currentStock == nil then currentStock = rack:GetAttribute("StockAmount") end
+
+		-- 🧠 GENIUS CATCH: If it's literally nil, the server/save hasn't loaded it yet. Wait for real data!
+		if currentStock == nil then return end
+
 		local isStocked = currentStock > 0
-		-- Automatically updates the boolean dynamically based on actual numerical stock counts
+		local isEmpty = currentStock <= 0
+
+		-- Automatically updates the booleans dynamically based on actual numerical stock counts
 		rack:SetAttribute("IsStocked", isStocked)
+		rack:SetAttribute("IsEmpty", isEmpty)
 
-		-- Track if the rack has been stocked at least once
-		if isStocked then
-			rack:SetAttribute("HasBeenStocked", true)
-		end
-		local hasBeenStocked = rack:GetAttribute("HasBeenStocked") or false
-
-		-- Only show out-of-stock visual if the rack has been stocked before and is now empty
-		local showOutOfStock = not isStocked and hasBeenStocked
-
-		-- Toggle Out of Stock GUI visibility
+		-- Toggle Out of Stock GUI visibility directly linked to the IsEmpty boolean
 		local interactionPart = rack:FindFirstChild("InteractionPart")
 		if interactionPart then
 			local outofstockPart = interactionPart:FindFirstChild("OutofstockPart")
 			if outofstockPart then
 				local outofstockGUI = outofstockPart:FindFirstChild("OutofstockGUI")
 				if outofstockGUI and outofstockGUI:IsA("BillboardGui") then
-					outofstockGUI.Enabled = showOutOfStock
+					outofstockGUI.Enabled = isEmpty
 				end
 			end
 		end
