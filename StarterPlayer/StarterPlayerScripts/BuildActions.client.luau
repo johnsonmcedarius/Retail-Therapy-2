@@ -92,6 +92,10 @@ undoButton.MouseButton1Click:Connect(function()
 		-- Undo a deletion by restoring the exact object from server trash (re-deduct 70%)
 		events.RestoreObject:FireServer({ObjectId = action.objectId, Reason = "undo"})
 		BuildHistory.pushRedo(action)
+	elseif action.action == "Move" then
+		-- Undo a move by sending the old CFrame position to the server
+		events.MoveObject:FireServer({ObjectId = action.objectId, CF = action.oldCF})
+		BuildHistory.pushRedo(action)
 	end
 end)
 
@@ -108,6 +112,10 @@ redoButton.MouseButton1Click:Connect(function()
 	elseif action.action == "Delete" then
 		-- Redo a deletion by deleting the object (70% refund)
 		events.DeleteObject:FireServer({ObjectId = action.objectId, Reason = "redo"})
+		BuildHistory.pushUndo(action)
+	elseif action.action == "Move" then
+		-- Redo a move by sending the new CFrame position back to the server
+		events.MoveObject:FireServer({ObjectId = action.objectId, CF = action.newCF})
 		BuildHistory.pushUndo(action)
 	end
 end)
