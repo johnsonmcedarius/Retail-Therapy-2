@@ -41,13 +41,13 @@ local categories = {
 local function setupViewport(viewportFrame: ViewportFrame, object: Instance)
 	local clone: Instance = object:Clone()
 	clone:PivotTo(CFrame.new(Vector3.zero))
-	
+
 	for _, descendant in clone:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
 		end
 	end
-	
+
 	clone.Parent = viewportFrame
 
 	local camera = Instance.new("Camera")
@@ -175,6 +175,15 @@ end
 for _, category in categories do
 	setupCategory(category)
 end
+
+-- Completely disappears and clears any pending build items when exiting build mode
+Build:GetPropertyChangedSignal("Enabled"):Connect(function()
+	if not Build.Enabled then
+		previewTrove:Clean()
+		PlacingService.Cancel()
+		previewHighlight.Adornee = nil
+	end
+end)
 
 do
 	local function OnCharacterAdded(char: Model)
