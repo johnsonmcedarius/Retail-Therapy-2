@@ -11,13 +11,13 @@ local CustomerAIService = {}
 
 CustomerAIService.CustomerTypes = {
 	Regular = {
-		SpawnWeight = 80,
+		SpawnWeight = 90,
 		SpendMultiplier = 1.0,
 		MaxItems = 3,
 		BudgetModifier = 1.0,
 	},
 	VIP = {
-		SpawnWeight = 20,
+		SpawnWeight = 10,
 		SpendMultiplier = 3.0,
 		MaxItems = 5,
 		BudgetModifier = 3.0,
@@ -57,9 +57,6 @@ function CustomerAIService.getCustomerTypeConfig(isVIP: boolean)
 	return CustomerAIService.CustomerTypes.Regular
 end
 
--- ==========================================
--- INITIALIZATION
--- ==========================================
 
 function CustomerAIService.init()
 	local typeCount = 0
