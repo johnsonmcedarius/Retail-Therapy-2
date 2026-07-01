@@ -59,9 +59,9 @@ function SprayEffectService.setSprayEffect(rack: Instance, sprayName: string)
 		return
 	end
 
-	-- Validation check against SprayData module to ensure the spray exists
-	local validSprays = SprayData.getSprayOrder()
-	if table.find(validSprays, sprayName) then
+	-- ✅ FIXED BUG: Check against the robust SPRAY_MULTIPLIERS table instead of SprayData order.
+	-- This stops mutations from randomly failing to apply if the string misses the word "Bottle" or "Spray"
+	if SPRAY_MULTIPLIERS[sprayName] then
 		rack:SetAttribute("SprayEffect", sprayName)
 		print(`[Server State] Applied {sprayName} attribute to {rack.Name}`)
 	else
