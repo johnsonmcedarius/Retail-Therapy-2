@@ -11,15 +11,12 @@ local NPCController = {}
 -- CONFIGURATION
 -- ==========================================
 NPCController.MaxNPCsPerPlot = 5
--- Seconds between NPC spawns per plot (min/max range)
 NPCController.SpawnInterval = { min = 5, max = 10 }
--- NPC model names in ServerStorage.NPC folder
 NPCController.NPCNames = { "NPC", "NPC2", "NPC3", "NPC4", "NPC5" }
 
 -- ==========================================
 -- STATE
 -- ==========================================
--- activeNPCs[plotModel] = {npc1, npc2, ...}
 local activeNPCs = {}
 local customerFolder = nil
 
@@ -27,29 +24,57 @@ local customerFolder = nil
 -- COLLISION GROUPS
 -- ==========================================
 
--- Assign all BaseParts in a model to the "NPCs" collision group
-local function assignNPCCollisionGroup(model: Model)
-	for _, descendant in model:GetDescendants() do
+local function setCollisionGroupRecursive(model: Model, groupName: string)
+	for _, descendant in ipairs(model:GetDescendants()) do
 		if descendant:IsA("BasePart") then
-			descendant.CollisionGroup = "NPCs"
+			local success = pcall(function()
+				descendant.CollisionGroup = groupName
+			end)
 		end
 	end
 end
 
--- Assign all BaseParts in a player character to the "Players" collision group
+-- Assign NPC parts
+local function assignNPCCollisionGroup(model: Model)
+	setCollisionGroupRecursive(model, "NPCs")
+
+	-- [[ HOTFIX: Kill root collision so they don't catch on player capsules ]]
+	local hrp = model:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.CanCollide = false
+	end
+
+	model.DescendantAdded:Connect(function(descendant)
+		if descendant:IsA("BasePart") then
+			descendant.CollisionGroup = "NPCs"
+			if descendant.Name == "Handle" or descendant.Name == "HumanoidRootPart" then
+				descendant.CanCollide = false
+			end
+		end
+	end)
+end
+
+-- Assign Player parts
 local function assignPlayerCollisionGroup(character: Model)
-	for _, descendant in character:GetDescendants() do
+	setCollisionGroupRecursive(character, "Players")
+
+	-- [[ HOTFIX: Force root collision checks ]]
+	local hrp = character:FindFirstChild("HumanoidRootPart")
+	if hrp then
+		hrp.CanCollide = false -- Server-side fallback
+	end
+
+	character.DescendantAdded:Connect(function(descendant)
 		if descendant:IsA("BasePart") then
 			descendant.CollisionGroup = "Players"
 		end
-	end
+	end)
 end
 
 -- ==========================================
 -- NPC MODEL SELECTION
 -- ==========================================
 
--- Clone a random NPC model from the specified folder
 local function getRandomModelFromFolder(folder: Instance): Model?
 	if not folder then return nil end
 	local name = NPCController.NPCNames[math.random(1, #NPCController.NPCNames)]
@@ -58,52 +83,44 @@ local function getRandomModelFromFolder(folder: Instance): Model?
 	return template:Clone()
 end
 
--- Clone a random Regular NPC model from ServerStorage.NPC
 local function getRandomRegularNPCModel(): Model?
 	return getRandomModelFromFolder(ServerStorage:FindFirstChild("NPC"))
 end
 
--- Clone a random VIP NPC model from ServerStorage.VIPNPC
 local function getRandomVIPNPCModel(): Model?
 	return getRandomModelFromFolder(ServerStorage:FindFirstChild("VIPNPC"))
 end
 
 -- ==========================================
--- APPEARANCE LOADER (Friends-based)
+-- APPEARANCE LOADER
 -- ==========================================
 
--- Attempt to apply a random friend's appearance to the NPC
--- Returns true if successful, false if fallback should be used
--- Safe catch: pcall wraps all friend API calls, falls back to folder appearance on failure
 local function applyFriendAppearance(npc: Model, plotOwnerUserId: number): boolean
 	local success, friendPages = pcall(function()
 		return Players:GetFriendsAsync(plotOwnerUserId)
 	end)
 
-	if not success or not friendPages then
-		return false
-	end
+	if not success or not friendPages then return false end
 
 	local friendsPage = friendPages:GetCurrentPage()
-	if not friendsPage or #friendsPage == 0 then
-		return false
-	end
+	if not friendsPage or #friendsPage == 0 then return false end
 
-	-- Pick a random friend from the page
 	local friend = friendsPage[math.random(1, #friendsPage)]
 
-	-- Try to get their HumanoidDescription
 	local descSuccess, humanoidDescription = pcall(function()
 		return Players:GetHumanoidDescriptionFromUserIdAsync(friend.Id)
 	end)
 
-	if not descSuccess or not humanoidDescription then
-		return false
-	end
+	if not descSuccess or not humanoidDescription then return false end
 
-	-- Apply the description to the NPC
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return false end
+
+	for _, child in ipairs(npc:GetChildren()) do
+		if child:IsA("Accessory") or child:IsA("Clothing") or child:IsA("ShirtGraphic") or child:IsA("BodyColors") then
+			child:Destroy()
+		end
+	end
 
 	local applySuccess = pcall(function()
 		humanoid:ApplyDescriptionAsync(humanoidDescription)
@@ -112,7 +129,6 @@ local function applyFriendAppearance(npc: Model, plotOwnerUserId: number): boole
 	return applySuccess
 end
 
--- Get the count of alive NPCs on a plot, cleaning up any destroyed references
 local function getActiveNPCCount(plot: Model): number
 	local npcs = activeNPCs[plot]
 	if not npcs then return 0 end
@@ -126,47 +142,39 @@ local function getActiveNPCCount(plot: Model): number
 	return #npcs
 end
 
--- Spawn a customer NPC at a plot's NPCSpawnZone and hand off to CustomerService
+-- ==========================================
+-- SPAWNING
+-- ==========================================
+
 local function spawnCustomerNPC(plot: Model, spawnZone: BasePart)
 	local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
 	local customerAIService = cachedModules.Cache.CustomerAIService
 
-	-- Roll customer type (VIP or Regular) based on spawn weights
 	local isVIP = customerAIService and customerAIService.rollCustomerType() or false
-
-	-- Get the appropriate NPC model from the folder
 	local npc = isVIP and getRandomVIPNPCModel() or getRandomRegularNPCModel()
 	if not npc then
-		-- Fallback: try the other folder
 		npc = isVIP and getRandomRegularNPCModel() or getRandomVIPNPCModel()
 	end
-	if not npc then
-		warn("[NPCController] Could not clone NPC model from ServerStorage")
-		return
-	end
+	if not npc then return end
 
-	-- Set IsVIP attribute on the NPC for CustomerService to read
 	npc:SetAttribute("IsVIP", isVIP)
 
-	-- Position the NPC at the spawn zone with slight randomization
 	local hrp = npc:FindFirstChild("HumanoidRootPart")
 	if hrp then
-		local spawnPosition = spawnZone.Position + Vector3.new(
-			math.random(-3, 3),
-			0,
-			math.random(-3, 3)
-		)
+		local spawnPosition = spawnZone.Position + Vector3.new(math.random(-3, 3), 0, math.random(-3, 3))
 		hrp.CFrame = CFrame.new(spawnPosition)
 	end
 
-	-- Parent to the CustomerNPCs folder in workspace
 	npc.Parent = customerFolder
 
-	-- Assign collision group to all NPC parts (no-collide with other NPCs and players)
+	if hrp then
+		pcall(function()
+			hrp:SetNetworkOwner(nil)
+		end)
+	end
+
 	assignNPCCollisionGroup(npc)
 
-	-- Try to apply a friend's appearance (plot owner's friends)
-	-- If GetFriendsAsync fails or no friends, NPC keeps its folder appearance (safe fallback)
 	if boutiqueShopService then
 		local isActive, player = boutiqueShopService.isPlotActive(plot)
 		if isActive and player then
@@ -174,19 +182,13 @@ local function spawnCustomerNPC(plot: Model, spawnZone: BasePart)
 		end
 	end
 
-	-- Track the NPC on this plot
-	if not activeNPCs[plot] then
-		activeNPCs[plot] = {}
-	end
+	if not activeNPCs[plot] then activeNPCs[plot] = {} end
 	table.insert(activeNPCs[plot], npc)
 
-	-- Hand off to CustomerService for full lifecycle behavior
 	local customerService = cachedModules.Cache.CustomerService
 	if customerService then
 		task.spawn(function()
 			customerService.runCustomer(npc, plot, spawnZone)
-
-			-- Remove from tracking when the lifecycle completes
 			if activeNPCs[plot] then
 				for i, n in ipairs(activeNPCs[plot]) do
 					if n == npc then
@@ -197,60 +199,58 @@ local function spawnCustomerNPC(plot: Model, spawnZone: BasePart)
 			end
 		end)
 	else
-		warn("[NPCController] CustomerService not available in cached modules!")
 		npc.Parent = nil
 	end
 end
 
--- ==========================================
--- MAIN SPAWN LOOP
--- ==========================================
-
--- Continuously spawns NPCs at active plots that have players present
 local function runSpawnLoop()
 	while true do
 		local boutiqueShopService = cachedModules.Cache.BoutiqueShopService
-		if boutiqueShopService then
+		local checkoutService = cachedModules.Cache.CheckoutService
+
+		if boutiqueShopService and checkoutService then
 			for _, plot in ipairs(boutiqueShopService.getPlots()) do
 				if not plot:IsA("Model") then continue end
 
-				-- Only spawn if the plot has an active player
 				local isActive = boutiqueShopService.isPlotActive(plot)
 				if isActive then
 					local spawnZone = boutiqueShopService.getSpawnZone(plot)
 					if spawnZone then
+						local registers = boutiqueShopService.getRegistersOnPlot(plot)
+						local linesAreFull = false
+
+						if #registers > 0 then
+							linesAreFull = true
+							for _, register in ipairs(registers) do
+								local currentLineCount = checkoutService.getLineCount(register)
+								local maxLineCapacity = #checkoutService.getAllQueuePoints(register)
+
+								if currentLineCount < maxLineCapacity then
+									linesAreFull = false
+									break
+								end
+							end
+						end
+
 						local currentCount = getActiveNPCCount(plot)
-						if currentCount < NPCController.MaxNPCsPerPlot then
+						if currentCount < NPCController.MaxNPCsPerPlot and not linesAreFull then
 							spawnCustomerNPC(plot, spawnZone)
 						end
 					end
 				end
 			end
 		end
-
-		-- Wait a random interval before the next spawn cycle
-		local interval = math.random(NPCController.SpawnInterval.min, NPCController.SpawnInterval.max)
-		task.wait(interval)
+		task.wait(math.random(NPCController.SpawnInterval.min, NPCController.SpawnInterval.max))
 	end
 end
 
--- ==========================================
--- CLEANUP
--- ==========================================
-
--- Remove all active NPCs from a plot when the player leaves
 local function cleanupPlotNPCs(plot: Model)
 	local npcs = activeNPCs[plot]
 	if not npcs then return end
-
 	for _, npc in ipairs(npcs) do
-		if npc.Parent then
-			npc.Parent = nil
-		end
+		if npc.Parent then npc.Parent = nil end
 	end
-
 	activeNPCs[plot] = nil
-	print("[NPCController] Cleaned up NPCs on plot " .. plot.Name .. " (player left)")
 end
 
 -- ==========================================
@@ -258,57 +258,45 @@ end
 -- ==========================================
 
 function NPCController.init()
-	-- Set up collision groups (NPCs don't collide with each other or with players)
-	PhysicsService:RegisterCollisionGroup("NPCs")
-	PhysicsService:RegisterCollisionGroup("Players")
-	PhysicsService:CollisionGroupSetCollidable("NPCs", "NPCs", false)
-	PhysicsService:CollisionGroupSetCollidable("NPCs", "Players", false)
+	-- [[ FIX: Removed the script-side group registration so it stops overriding your Studio window settings ]]
 
-	-- Assign player characters to "Players" collision group
 	local function onCharacterAdded(character: Model)
-		assignPlayerCollisionGroup(character)
-		-- Also handle parts added later (e.g., accessories)
-		character.DescendantAdded:Connect(function(descendant)
-			if descendant:IsA("BasePart") then
-				descendant.CollisionGroup = "Players"
-			end
+		-- Wait a brief heartbeat for components to build safely
+		task.defer(function()
+			assignPlayerCollisionGroup(character)
 		end)
 	end
 
 	Players.PlayerAdded:Connect(function(player)
-		player.CharacterAdded:Connect(onCharacterAdded)
+		player.CharacterAdded:Connect(onCharacterAdded) 
 	end)
 
-	-- Handle players already in the game
-	for _, player in Players:GetPlayers() do
-		if player.Character then
-			onCharacterAdded(player.Character)
-		end
-		player.CharacterAdded:Connect(onCharacterAdded)
+	for _, player in ipairs(Players:GetPlayers()) do 
+		if player.Character then 
+			onCharacterAdded(player.Character) 
+		end 
+		player.CharacterAdded:Connect(onCharacterAdded) 
 	end
 
-	-- Get or create the CustomerNPCs folder in workspace
-	customerFolder = workspace:FindFirstChild("CustomerNPCs")
-	if not customerFolder then
-		customerFolder = Instance.new("Folder")
-		customerFolder.Name = "CustomerNPCs"
-		customerFolder.Parent = workspace
+	customerFolder = workspace:FindFirstChild("CustomerNPCs") 
+	if not customerFolder then 
+		customerFolder = Instance.new("Folder") 
+		customerFolder.Name = "CustomerNPCs" 
+		customerFolder.Parent = workspace 
 	end
 
-	-- Start the spawn loop in a background task
-	task.spawn(runSpawnLoop)
+	task.spawn(runSpawnLoop) 
 
-	-- Clean up NPCs when a player leaves the server
 	Players.PlayerRemoving:Connect(function(player)
-		for _, plot in ipairs(workspace.Plots:GetChildren()) do
-			if plot:IsA("Model") and plot:GetAttribute("USERID") == player.UserId then
+		for _, plot in ipairs(workspace.Plots:GetChildren()) do 
+			if plot:IsA("Model") and plot:GetAttribute("USERID") == player.UserId then 
 				cleanupPlotNPCs(plot)
 				break
 			end
 		end
 	end)
 
-	print("[NPCController] Initialized! MaxNPCsPerPlot = " .. NPCController.MaxNPCsPerPlot .. ", SpawnInterval = " .. NPCController.SpawnInterval.min .. "-" .. NPCController.SpawnInterval.max .. "s, CollisionGroups: NPCs/Players, Friend appearance loader active")
+	print("[NPCController] Handled perfectly via Studio parameters.") 
 end
 
 return NPCController
