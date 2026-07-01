@@ -189,6 +189,18 @@ local function setupStaffingTouch(registerModel: Model)
 
 		if not isValidStaff then return end
 
+		-- Plot Ownership Security Block: Stop players staffing other people's checkout lines!
+		local registerPlot = registerModel:FindFirstAncestorOfClass("Model")
+		while registerPlot and registerPlot.Parent ~= workspace.Plots do
+			registerPlot = registerPlot.Parent
+		end
+		if player and registerPlot then
+			local ownerId = registerPlot:GetAttribute("USERID")
+			if ownerId ~= player.UserId then
+				return -- Secure escape!
+			end
+		end
+
 		if player then
 			local players = staffingPlayers[registerModel]
 			if not players[player] then
@@ -207,7 +219,6 @@ local function setupStaffingTouch(registerModel: Model)
 		local character = hit.Parent
 
 		-- MAX Studs away a character can be before they are counted as "fully left"
-		-- This replaces the broken Magnitude / 2 calculation
 		local strictExitRadius = 4 
 
 		if player then
