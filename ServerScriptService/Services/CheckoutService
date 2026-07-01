@@ -11,9 +11,7 @@ local CheckoutService = {}
 -- ==========================================
 -- CONFIGURATION
 -- ==========================================
--- How long a customer takes to pay at the register (seconds)
 CheckoutService.CheckoutTime = 3
--- How long an NPC employee takes to process a transaction (seconds, for future EmployeeService)
 CheckoutService.EmployeeCheckoutTime = 3
 
 -- Queue table: [registerModel] = {npc1, npc2, npc3, ...}
@@ -23,7 +21,6 @@ local RegisterQueues = {}
 -- QUEUE MANAGEMENT
 -- ==========================================
 
--- Get or create the queue for a specific register
 function CheckoutService.getQueue(registerModel: Model)
 	if not RegisterQueues[registerModel] then
 		RegisterQueues[registerModel] = {}
@@ -31,27 +28,18 @@ function CheckoutService.getQueue(registerModel: Model)
 	return RegisterQueues[registerModel]
 end
 
--- Get the current line count for a register
 function CheckoutService.getLineCount(registerModel: Model): number
 	local queue = CheckoutService.getQueue(registerModel)
 	return #queue
 end
 
--- Add a customer NPC to a register's queue (First Come, First Served)
--- Returns the customer's position in line (1-based)
 function CheckoutService.addCustomer(registerModel: Model, npcModel: Model): number
 	local queue = CheckoutService.getQueue(registerModel)
 	table.insert(queue, npcModel)
-
-	-- Update LineOccupants attribute on the register (the broadcast system)
 	registerModel:SetAttribute("LineOccupants", #queue)
-
 	return #queue
 end
 
--- Remove a customer NPC from a register's queue
--- This naturally shifts everyone forward (table.remove shifts indices down)
--- Returns the new line count
 function CheckoutService.removeCustomer(registerModel: Model, npcModel: Model): number
 	local queue = CheckoutService.getQueue(registerModel)
 	for i, npc in ipairs(queue) do
@@ -60,14 +48,10 @@ function CheckoutService.removeCustomer(registerModel: Model, npcModel: Model): 
 			break
 		end
 	end
-
-	-- Update LineOccupants attribute
 	registerModel:SetAttribute("LineOccupants", #queue)
-
 	return #queue
 end
 
--- Get the position of a specific NPC in the queue (nil if not in queue)
 function CheckoutService.getPositionInQueue(registerModel: Model, npcModel: Model): number?
 	local queue = CheckoutService.getQueue(registerModel)
 	for i, npc in ipairs(queue) do
@@ -82,13 +66,11 @@ end
 -- QUEUE POINTS
 -- ==========================================
 
--- Get the QueuePoint part for a specific position (e.g., QueuePoint_1, QueuePoint_2)
 function CheckoutService.getQueuePoint(registerModel: Model, position: number): BasePart?
 	local queuePointName = "QueuePoint_" .. tostring(position)
 	return registerModel:FindFirstChild(queuePointName)
 end
 
--- Get all queue points on a register, sorted by position number
 function CheckoutService.getAllQueuePoints(registerModel: Model): {BasePart}
 	local points = {}
 	for _, child in ipairs(registerModel:GetChildren()) do
@@ -113,13 +95,10 @@ end
 -- STAFFING
 -- ==========================================
 
--- Check if a register is currently staffed (IsStaffed == true)
 function CheckoutService.isStaffed(registerModel: Model): boolean
 	return registerModel:GetAttribute("IsStaffed") == true
 end
 
--- Set the staffed state of a register
--- When IsStaffed is true, the register is active and the line moves forward
 function CheckoutService.setStaffed(registerModel: Model, isStaffed: boolean)
 	registerModel:SetAttribute("IsStaffed", isStaffed)
 end
@@ -128,7 +107,7 @@ end
 -- REGISTER PARTS
 -- ==========================================
 
--- Get the EmployeeStandPart for a register (where the cashier stands)
+-- Get the EmployeeStandPart for a register
 function CheckoutService.getEmployeeStandPart(registerModel: Model): BasePart?
 	return registerModel:FindFirstChild("EmployeeStandPart")
 end
@@ -137,12 +116,10 @@ end
 -- TIMING CONFIGURATION
 -- ==========================================
 
--- Get the customer checkout time (how long a customer takes to pay)
 function CheckoutService.getCheckoutTime(): number
 	return CheckoutService.CheckoutTime
 end
 
--- Get the NPC employee checkout time (for future EmployeeService)
 function CheckoutService.getEmployeeCheckoutTime(): number
 	return CheckoutService.EmployeeCheckoutTime
 end
@@ -151,22 +128,18 @@ end
 -- INITIALIZATION
 -- ==========================================
 
--- Check if a part belongs to a real player character (not an NPC)
 local function isPlayerCharacter(part: BasePart): Player?
 	local character = part.Parent
 	if not character then return nil end
 	local humanoid = character:FindFirstChildOfClass("Humanoid")
 	if not humanoid then return nil end
-	-- Only real players have a matching Player object
-	local player = Players:GetPlayerFromCharacter(character)
-	return player
+	return Players:GetPlayerFromCharacter(character)
 end
 
--- Recompute IsStaffed based on whether any player is standing on the EmployeeStandPart
+-- Recompute IsStaffed based on players table
 local function recomputeStaffed(registerModel: Model)
 	local players = staffingPlayers[registerModel]
 	if players then
-		-- Clean up references to players who left the game
 		for player in pairs(players) do
 			if not player.Parent or not player.Character then
 				players[player] = nil
@@ -174,9 +147,7 @@ local function recomputeStaffed(registerModel: Model)
 		end
 
 		if next(players) then
-			-- At least one player is staffing
 			CheckoutService.setStaffed(registerModel, true)
-			-- Store the first staffing player's UserId
 			for player in pairs(players) do
 				registerModel:SetAttribute("StaffedBy", player.UserId)
 				break
@@ -185,9 +156,13 @@ local function recomputeStaffed(registerModel: Model)
 		end
 	end
 
-	-- Nobody is staffing
-	CheckoutService.setStaffed(registerModel, false)
-	registerModel:SetAttribute("StaffedBy", 0)
+	-- If no players are tracking, check if an NPC employee is still occupying the attribute before shutting it down
+	if registerModel:GetAttribute("StaffedBy") == "NPC_Employee" then
+		CheckoutService.setStaffed(registerModel, true)
+	else
+		CheckoutService.setStaffed(registerModel, false)
+		registerModel:SetAttribute("StaffedBy", 0)
+	end
 end
 
 -- Set up touch-based staffing for a register's EmployeeStandPart
@@ -200,40 +175,74 @@ local function setupStaffingTouch(registerModel: Model)
 
 	staffingPlayers[registerModel] = staffingPlayers[registerModel] or {}
 
-	-- When a player steps onto the stand part, mark them as staffing
+	-- When someone steps onto the stand part
 	standPart.Touched:Connect(function(hit)
 		local player = isPlayerCharacter(hit)
-		if not player then return end
+		local character = hit.Parent
 
-		local players = staffingPlayers[registerModel]
-		if not players[player] then
-			players[player] = true
-			recomputeStaffed(registerModel)
+		local isValidStaff = false
+		if player then
+			isValidStaff = true
+		elseif character and character:GetAttribute("IsNPCEmployee") == true then
+			isValidStaff = true
+		end
+
+		if not isValidStaff then return end
+
+		if player then
+			local players = staffingPlayers[registerModel]
+			if not players[player] then
+				players[player] = true
+				recomputeStaffed(registerModel)
+			end
+		elseif character then
+			CheckoutService.setStaffed(registerModel, true)
+			registerModel:SetAttribute("StaffedBy", "NPC_Employee")
 		end
 	end)
 
-	-- When a player steps off the stand part, remove them from staffing
+	-- When someone steps off the stand part
 	standPart.TouchEnded:Connect(function(hit)
 		local player = isPlayerCharacter(hit)
-		if not player then return end
+		local character = hit.Parent
 
-		local players = staffingPlayers[registerModel]
-		if players[player] then
-			-- Small debounce to avoid flicker from multi-part touch ended events
-			task.wait(0.2)
-			-- Verify the player is actually no longer standing on the part
-			local char = player.Character
-			local hrp = char and char:FindFirstChild("HumanoidRootPart")
+		-- MAX Studs away a character can be before they are counted as "fully left"
+		-- This replaces the broken Magnitude / 2 calculation
+		local strictExitRadius = 4 
+
+		if player then
+			local players = staffingPlayers[registerModel]
+			if players[player] then
+				task.wait(0.15) -- Quick debounce
+
+				local char = player.Character
+				local hrp = char and char:FindFirstChild("HumanoidRootPart")
+				if hrp and standPart then
+					-- Calculate flat X/Z plane distance so jump height doesn't break it
+					local distance = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(standPart.Position.X, 0, standPart.Position.Z)).Magnitude
+					if distance < strictExitRadius then
+						return -- Still lingering inside zone, don't unstaff
+					end
+				end
+
+				players[player] = nil
+				recomputeStaffed(registerModel)
+			end
+		elseif character and character:GetAttribute("IsNPCEmployee") == true then
+			task.wait(0.15)
+
+			local hrp = character:FindFirstChild("HumanoidRootPart")
 			if hrp and standPart then
-				local distance = (hrp.Position - standPart.Position).Magnitude
-				if distance < (standPart.Size.Magnitude / 2) + 3 then
-					-- Player is still close enough, re-add them
-					players[player] = true
-					return
+				local distance = (Vector3.new(hrp.Position.X, 0, hrp.Position.Z) - Vector3.new(standPart.Position.X, 0, standPart.Position.Z)).Magnitude
+				if distance < strictExitRadius then
+					return -- NPC is still standing there
 				end
 			end
 
-			players[player] = nil
+			-- Only wipe the NPC state if a player isn't currently using the register
+			if registerModel:GetAttribute("StaffedBy") == "NPC_Employee" then
+				registerModel:SetAttribute("StaffedBy", 0)
+			end
 			recomputeStaffed(registerModel)
 		end
 	end)
@@ -249,7 +258,6 @@ local function setupRegister(registerModel: Model)
 	print("[CheckoutService] Register detected and initialized: " .. registerModel.Name)
 end
 
--- Auto-unstaff when a staffing player leaves the server
 local function onPlayerRemoving(player: Player)
 	for _, registerModel in ipairs(CollectionService:GetTagged("CashRegister")) do
 		local players = staffingPlayers[registerModel]
@@ -262,15 +270,12 @@ local function onPlayerRemoving(player: Player)
 end
 
 function CheckoutService.init()
-	-- Track newly tagged CashRegister objects (for future registers placed via build system)
 	CollectionService:GetInstanceAddedSignal("CashRegister"):Connect(setupRegister)
 
-	-- Initialize existing tagged registers
 	for _, registerModel in ipairs(CollectionService:GetTagged("CashRegister")) do
 		setupRegister(registerModel)
 	end
 
-	-- Auto-unstaff when a staffing player leaves the game
 	Players.PlayerRemoving:Connect(onPlayerRemoving)
 
 	print("[CheckoutService] Initialized! CheckoutTime = " .. CheckoutService.CheckoutTime .. "s, EmployeeCheckoutTime = " .. CheckoutService.EmployeeCheckoutTime .. "s")
