@@ -7,8 +7,6 @@ local BoutiqueShopService = {}
 -- ==========================================
 -- CONFIGURATION
 -- ==========================================
--- Base price per item before spray multipliers are applied
-BoutiqueShopService.BasePrice = 100
 -- Maximum concurrent customer NPCs allowed per plot
 BoutiqueShopService.MaxNPCsPerPlot = 5
 -- Seconds between NPC spawns per plot (min/max range)
@@ -82,16 +80,18 @@ end
 -- ==========================================
 
 -- Calculate the payout for a rack purchase
--- Formula: Payout = Base Price x Spray Multiplier
--- Example: BasePrice=100, Vamp Era spray=10.0 -> Payout=1000
-function BoutiqueShopService.calculatePayout(rackModel: Model): number
+-- Formula: Payout = PricePerItem x ItemsBought x SpendMultiplier x MutationMultiplier
+-- Example: PricePerItem=40, 3 items, VIP(3x), Vamp Era spray(10x) -> Payout=3600
+function BoutiqueShopService.calculatePayout(rackModel: Model, itemsBought: number, spendMultiplier: number): number
+	local pricePerItem = rackModel:GetAttribute("PricePerItem") or 40
+
 	local sprayEffectService = cachedModules.Cache.SprayEffectService
-	if not sprayEffectService then
-		return BoutiqueShopService.BasePrice
+	local mutationMultiplier = 1.0
+	if sprayEffectService then
+		mutationMultiplier = sprayEffectService.getMultiplier(rackModel)
 	end
 
-	local multiplier = sprayEffectService.getMultiplier(rackModel)
-	return BoutiqueShopService.BasePrice * multiplier
+	return pricePerItem * itemsBought * spendMultiplier * mutationMultiplier
 end
 
 -- Award money to the plot owner when a customer pays
@@ -111,7 +111,7 @@ end
 -- ==========================================
 
 function BoutiqueShopService.init()
-	print("[BoutiqueShopService] Initialized! BasePrice = " .. BoutiqueShopService.BasePrice .. ", MaxNPCsPerPlot = " .. BoutiqueShopService.MaxNPCsPerPlot)
+	print("[BoutiqueShopService] Initialized! Dynamic pricing from rack PricePerItem, MaxNPCsPerPlot = " .. BoutiqueShopService.MaxNPCsPerPlot)
 end
 
 return BoutiqueShopService
