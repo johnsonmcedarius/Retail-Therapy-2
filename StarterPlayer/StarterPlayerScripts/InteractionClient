@@ -91,21 +91,14 @@ local function setRackVisualsHidden(rack, hidden)
 	local interactionPart = rack:FindFirstChild("InteractionPart", true)
 	if not interactionPart then return end
 
-	-- Toggle proximity prompts
-	for _, descendant in interactionPart:GetDescendants() do
-		if descendant:IsA("ProximityPrompt") then
-			descendant.Enabled = not hidden
-		end
-	end
+	-- ✅ FIXED BUG: Removed the ProximityPrompt force-toggling loop that was breaking the Spray/Restock states. 
+	-- RackPromptController natively listens for the "IsMovingBuild" attribute, let it do its job cleanly!
 
-	-- Toggle out-of-stock part and GUI
+	-- Toggle out-of-stock part
 	local outofstockPart = interactionPart:FindFirstChild("OutofstockPart")
 	if outofstockPart and outofstockPart:IsA("BasePart") then
 		outofstockPart.Transparency = hidden and 1 or 0
-		local outofstockGUI = outofstockPart:FindFirstChild("OutofstockGUI")
-		if outofstockGUI and outofstockGUI:IsA("BillboardGui") then
-			outofstockGUI.Enabled = not hidden
-		end
+		-- Removed GUI "Enabled" override here so it doesn't accidentally trigger a fake sold-out sign
 	end
 end
 
