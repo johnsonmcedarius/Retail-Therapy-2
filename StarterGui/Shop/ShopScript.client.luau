@@ -18,22 +18,14 @@ local Sounds = ReplicatedStorage:WaitForChild("Sounds")
 local player = Players.LocalPlayer
 local gui = script.Parent
 local shopFrame = gui:WaitForChild("ShopFrame")
-local Notification = gui:WaitForChild("RestockNotification")
 local scrollFrame = shopFrame:WaitForChild("ScrollingFrame")
 local timerLabel = shopFrame:WaitForChild("Timer")
 local sprayFrameTemplate = script:WaitForChild("SprayFrameTemplate")
-local RestockSound = Sounds:WaitForChild("Restock")
-local PurchaseSound = Sounds:WaitForChild("Purchase")
 
 -- State
 local CurrentShopData = {} 
 local dataLoaded = false 
 local playerShopData = {} 
-
--- Sound Connections
-RemoteEvents.Purchase.OnClientEvent:Connect(function()
-	PurchaseSound:Play()
-end)
 
 RemoteEvents.SprayShopTimer.OnClientEvent:Connect(function(timeLeft)
 	timerLabel.Text = "Restocks in: " .. tostring(timeLeft)
@@ -45,12 +37,6 @@ local RESTOCK_PRODUCT_ID = Monetization.DevProducts.RestockShop
 restockButton.MouseButton1Click:Connect(function()
 	MarketplaceService:PromptProductPurchase(player, RESTOCK_PRODUCT_ID)
 end)
-
--- Notification Tween Generation Setup
-Notification.TextTransparency = 1
-Notification.Visible = false
-local fadeInTween = TweenService:Create(Notification, TweenInfo.new(0.5), {TextTransparency = 0})
-local fadeOutTween = TweenService:Create(Notification, TweenInfo.new(0.5), {TextTransparency = 1})
 
 --// Universal Frame UI Updater (Handles Coin/Diamond UI layouts cleanly)
 local function updateFrameUI(sprayFrame, data)
@@ -245,18 +231,5 @@ RemoteEvents.ResetSprayShop.OnClientEvent:Connect(function(sprayData, isRestock)
 		end
 	end
 
-	if isRestock then
-		RestockSound:Play()
 
-		-- 3. Run visual UI banners inside a safe background thread
-		task.spawn(function()
-			Notification.Text = "Spray Grounds have been restocked!"
-			Notification.Visible = true
-			fadeInTween:Play()
-			task.wait(2.5)
-			fadeOutTween:Play()
-			fadeOutTween.Completed:Wait()
-			Notification.Visible = false
-		end)
-	end
 end)
