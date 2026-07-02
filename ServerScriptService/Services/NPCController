@@ -2,8 +2,11 @@ local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local PhysicsService = game:GetService("PhysicsService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local cachedModules = require(script.Parent.Parent.Server.CachedModules)
+local RemoteEvents = ReplicatedStorage:WaitForChild("RemoteEvents")
+local customerNotification = RemoteEvents:WaitForChild("CustomerNotification")
 
 local NPCController = {}
 
@@ -158,6 +161,14 @@ local function spawnCustomerNPC(plot: Model, spawnZone: BasePart)
 	if not npc then return end
 
 	npc:SetAttribute("IsVIP", isVIP)
+
+	-- Fire VIP notification to plot owner when a VIP customer enters
+	if isVIP and boutiqueShopService then
+		local isActive, plotOwner = boutiqueShopService.isPlotActive(plot)
+		if isActive and plotOwner then
+			customerNotification:FireClient(plotOwner, "VIP", "A VIP customer has entered your store!")
+		end
+	end
 
 	local hrp = npc:FindFirstChild("HumanoidRootPart")
 	if hrp then
